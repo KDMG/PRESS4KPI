@@ -147,6 +147,12 @@ indToBasicData1([[M|R]|Lm],[B|Lb]):-
 
 indToBasicData1([],[]):-!.
   
+basicDataToInd(Ld,Lm):-
+    sameAs(X,d),
+    member(d,Ld),
+    toList(d,List),
+    meaToInd(List,Lm).
+  
 decomp([M|R],[B|Lb]):-
 	sameAs(M,B),
  	decomp(R,Lb).
