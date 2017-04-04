@@ -1,0 +1,4822 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+PRESS4KPI
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+limited(N,Goal):-abolish(cont/1),assert(cont(1)),control(N,Goal).
+control(N,Goal):-call(Goal),cont(I),(I<N ->I1 is I+1;!),retract(cont(I)),assert(cont(I1)).
+
+
+:- op(40,xfx,\).
+:- op(50,xfx,^).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+% Consistency predicates
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+identical_formula(N) :-
+	equation(Equation,X),
+	identical(Equation,X,N).
+
+identical(Equation,X,L) :-
+	solve_equation(Equation,X,X=Solution),
+	formula(X,S,_,L),
+	Solution=S.
+
+incoherent_formula(N) :-
+	equation(Equation,X),
+	incoherence(Equation,X,N).
+
+incoherence(Equation,X,N) :-
+	expand_equation(Equation,ExpandedEquation),
+	solve_equation(ExpandedEquation,X,X=Solution),
+	formula(Y,S,_,N),
+	expand_equation(Y=S,Y=ES),
+	solve_equation(Y=ES,X,X=Solution2),
+	Solution \= Solution2,
+	tolist(Solution,LSol),
+	tolist(Solution2,LSol2),
+	\+ notin(LSol,LSol2).
+
+incoherence(Equation,X,inconsistent) :-
+	expand_equation(Equation,ExpandedEquation),
+	solve_equation(ExpandedEquation,X,X=0).
+	
+incoherence(Equation,X,consistent) :-
+	expand_equation(Equation,ExpandedEquation),
+	\+ formula(X,_,_,_),
+	!.
+
+incoherence(Equation,X,consistent) :-
+	\+ expand_equation(Equation,ExpandedEquation),
+	formula(X,_,leaf_node,N),    
+	!.
+
+incoherence(Equation,X,N) :-
+	\+ expand_equation(Equation,ExpandedEquation),
+	formula(X,_,branch_node,N),    
+	!.
+
+incoherence(Equation,X,consistent) :-
+	\+ expand_equation(Equation,ExpandedEquation),
+	\+ formula(X,_,_,_).
+
+equivalent_formula(N) :-
+	equation(Equation,X),
+	equivalence(Equation,X,N).
+
+equivalence(Equation,X,N) :-
+	expand_equation(Equation,ExpandedEquation),
+	solve_equation(ExpandedEquation,X,X=Solution),
+	formula(Y,S,_,N),
+	expand_equation(Y=S,Y=ES),
+	solve_equation(Y=ES,Y,Y=Solution2),
+	Solution=Solution2.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Dependency analysis predicates
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	
+checkInd(Ent,Lin,V,'yes we can!'):-
+	meaToInd(Ent,Lin,V),!.
+checkInd(Ent,Lin,V,'no!'):- !.
+	
+meaToInd(Ent,Lin,V):- %Ent=data source name, Lin=lista di indicatori, V= indicatore costruibile da Lin
+	hasMeaEnt(Ent,Lin),
+	formula(V,F,Kind,Fname),
+	\+ member(V,Lin),
+	indToMea(Ent,V,L),
+	subset(L,Lin).
+
+hasMeaEnt(Ent,[]).
+hasMeaEnt(Ent,[T|C]):-
+	atom(T),
+	hasInd(Ent,T),
+	hasMeaEnt(Ent,C).
+		
+indToMea(Ent,L,Lfin):- 
+	abolish(cont1/1),
+	assert(cont1(L)),
+	hasEntInd(Ent,[L],[],Lfin2),
+%	remove_duplicates(Lfin2,Lfin).
+	sort(Lfin2,Lfin),
+	contr(Lfin).
+
+contr(Lfin):- 
+	not(cont1(Lfin)),
+	assert(cont1(Lfin)). 
+
+hasEntInd(Ent,[],L,[]):-!.
+
+hasEntInd(Ent,[Ind|Lind],L,[Ind|Lfin]):-
+	atom(Ind),
+	hasInd(Ent,Ind),
+	hasEntInd(Ent,Lind,L,Lfin).
+
+hasEntInd(Ent,[Ind|Lind],Lform,Lfin):- 
+	% formula(V,F,Kind,Fname),
+	formula(V,F,branch_node,Fname),
+	\+ member(Fname,Lform), % per evitare loop
+	% formula_rewrite(V,F,Ind,Kind,Solution),
+	formula_rewrite(V,F,Ind,branch_node,Solution),
+	tolist(Solution,ListInd),
+	append(ListInd,Lind,Lnew),
+	remove_duplicates(Lnew,Lnew2),
+	append([Fname],Lform,Lform2),
+	remove_duplicates(Lform2,Lform2ok),
+	\+ subset(Lnew2,Lind), % per evitare loop
+	hasEntInd(Ent,Lnew2,Lform2ok,Lfin).
+	
+formula_rewrite(V,F,V,leaf_node,F).
+formula_rewrite(V,F,V,branch_node,F).
+formula_rewrite(V,F,Ind,branch_node,Solution):-
+	tolist(F,List),
+	append(List,[V],List2),
+	member(Ind,List2),
+	solve_equation(V=F,Ind,Ind=Solution).
+
+indToBasicData(Li,Ld):-
+	indToMea(Li,Lm),
+	indToBasicData1(Lm,Ld).
+  
+indToBasicData1([[M|R]|Lm],[B|Lb]):-
+	decomp([M|R],B),	
+	indToBasicData1(Lm,Lb).
+
+indToBasicData1([],[]):-!.
+  
+decomp([M|R],[B|Lb]):-
+	sameAs(M,B),
+ 	decomp(R,Lb).
+decomp([],[]):-!.
+
+basicDataToSubPackages([D|Ld],[P|Ls]):-
+	inPackage(D,P),
+	basicDataToSubPackages(Ld,Ls).
+ 
+basicDataToSubPackages([],[]):-!.
+
+getMeasurableLevels(I,L):-
+	compatibleDim(I,D),
+	inDimension(L,D),
+	sameAs(L,Bl),
+	inClass(Bl,Cl),
+	sameAs(I,Bi),
+	inClass(Bi,Ci),
+	isDependentOn(Ci,Cl).
+    
+isDependentOn(X,Y):- dependentOn(X,Y).
+
+isDependentOn(X,Z):- dependentOn(X,Y), isDependentOn(Y,Z).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Mathematical manipulation predicates
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+expand_equation(LM=RM,LM=EE) :-
+	expand_equation(RM,EE).
+expand_equation((T1+T2),E) :-
+	expand_equation(T1,ET1),
+	expand_equation(T2,ET2),
+	reduce((ET1+ET2),E).
+expand_equation((T1-T2),E) :-
+	expand_equation(T1,ET1),
+	expand_equation(T2,ET2),
+	reduce((ET1-ET2),E).
+expand_equation((T1*T2),E) :-
+	expand_equation(T1,ET1),
+	expand_equation(T2,ET2),
+	reduce((ET1*ET2),E).
+expand_equation((T1/T2),E) :-
+	expand_equation(T1,ET1),
+	expand_equation(T2,ET2),
+	reduce((ET1/ET2),E).
+expand_equation(T,T) :-
+	number(T).
+expand_equation(T,ET) :-
+	formula(T,T1,branch_node,_),
+	expand_equation(T1,ET).
+expand_equation(T,ET) :-
+	formula(T,ET,leaf_node,_).
+
+reduce(((N/D)*(D/N)),1) :-
+	!.
+reduce(((N1/D)*(D/N2)),(N1/N2)) :-
+	!.
+reduce(((N/D1)*(D2/N)),(D2/D1)) :-
+	!.
+reduce(((N1/D1)*(N2/D2)),(P1/P2)) :- 
+	simplify_product((N1*N2),P1),
+	simplify_product((D1*D2),P2),
+	!.
+reduce(((N/T)*T),N) :-
+	!.
+reduce(((N1/D1)*T2),(P/D1)) :- 
+	simplify_product((N1*T2),P),
+	!.
+reduce((T*(N2/T)),N2) :-
+	!.
+reduce((T1*(N2/D2)),(P/D2)) :- 
+	simplify_product((T1*N2),P),
+	!.
+reduce((T1*T2),P) :- 
+	simplify_product((T1*T2),P),
+	!.
+
+reduce(((N/D)/(N/D)),1) :-
+	!.
+reduce(((N1/D)/(N2/D)),(N1/N2)) :-
+	!.
+reduce(((N/D1)/(N/D2)),(D2/D1)) :-
+	!.
+reduce(((N1/D1)/(N2/D2)),(P1/P2)) :- 
+	simplify_product((N1*D2),P1),
+	simplify_product((D1*N2),P2),
+	!.
+reduce(((T/D1)/T),(1/D1)) :-
+	!.
+reduce(((N1/D1)/T2),(N1/P)) :- 
+	simplify_product((D1*T2),P),
+	!.
+reduce((T/(T/D2)),D2) :-
+	!.
+reduce((T1/(N2/D2)),(P/N2)) :- 
+	simplify_product((T1*D2),P),
+	!.
+reduce((T/T),1) :- 
+	!.
+reduce((T1/T2),(T1/T2)) :- 
+	!.
+
+reduce(((N1/D1)+(N2/D2)),((P1+P2)/P3)) :-
+	simplify_product((N1*D2),P1),
+	simplify_product((N2*D1),P2),
+	simplify_product((D1*D2),P3),
+	!.
+reduce(((N1/D1)-(N2/D2)),((P1-P2)/P3)) :-
+	simplify_product((N1*D2),P1),
+	simplify_product((N2*D1),P2),
+	simplify_product((D1*D2),P3),
+	!.
+reduce(((N1/D1)+T2),((N1+P)/D1)) :-
+	simplify_product((T2*D1),P),
+	!.
+reduce(((N1/D1)-T2),((N1-P)/D1)) :- 
+	simplify_product((T2*D1),P),
+	!.
+reduce((T1+(N2/D2)),((P+N2)/D2)) :- 
+	simplify_product((T1*D2),P),
+	!.
+reduce((T1-(N2/D2)),((P-N2)/D2)) :- 
+	simplify_product((T1*D2),P),
+	!.
+reduce((T1+T2),(T1+T2)) :- !.
+reduce((T1-T2),(T1-T2)) :- !.
+
+simplify_product(P,T) :-
+	simplify_term(P,T).
+
+
+inversion_result(Y) :- equation(E,U), solve_equation(E,U,Y).
+
+solve_equation(Equation,X,X=Solution) :-
+	solve_equation_1(Equation,X,X=SolutionNotSimplified),
+	simplify_solution(SolutionNotSimplified,Solution).
+
+
+% Factorialization method
+solve_equation_1((A*B)=0,X,X=Solution) :-
+	!,
+    factorize(A*B,X,Factors\[]),
+    remove_duplicates(Factors,Factors1),
+    solve_factors(Factors1,X,X=Solution).
+
+% Isolation method
+solve_equation_1(LeftMember=RightMember,X,Solution) :-
+	simplify_term(LeftMember-RightMember,LeftMember1),
+	single_occurrence(X,LeftMember1=0),
+    !,
+    position(X,LeftMember1=0,[Side|Position]),
+    maneuver_sides(Side,LeftMember1=0,Equation),
+    isolate(Position,Equation,Solution).
+    
+% Polynomial method
+solve_equation_1(Lhs=Rhs,X,Solution) :-
+	polynomial(Lhs,X),
+	polynomial(Rhs,X),
+    !,
+    polynomial_normal_form(Lhs-Rhs,X,PolyForm),
+	normalize_and_solve(Lhs-Rhs,PolyForm,X,Solution).
+
+%Factorialize
+
+factorize(A*B,X,Factors\Rest) :-
+    !,
+	factorize(A,X,Factors\Factors1),
+	factorize(B,X,Factors1\Rest).
+factorize(C,X,[C|Factors]\Factors) :-
+    subterm(X,C),
+	!.
+factorize(C,X,Factors\Factors).
+ 
+solve_factors([Factor|Factors],X,Solution) :-
+	solve_equation(Factor=0,X,Solution).
+solve_factors([Factor|Factors],X,Solution) :-
+    solve_factors(Factors,X,Solution).
+
+% Isolation
+	
+maneuver_sides(1,Lhs = Rhs,Lhs = Rhs) :- !.
+maneuver_sides(2,Lhs = Rhs,Rhs = Lhs) :- !.
+
+isolate([N|Position],Equation,IsolatedEquation) :- 
+	isolax(N,Equation,Equation1), 
+    isolate(Position,Equation1,IsolatedEquation).
+isolate([],Equation,Equation).
+
+isolax(1,-Lhs = Rhs,Lhs = Rhs1) :-
+	minus(Rhs,Rhs1).
+
+isolax(1,(Term1+Term2) = Rhs,Term1 = Diff) :-
+	sub_op_list(Rhs,Term2,Diff).
+isolax(2,(Term1+Term2) = Rhs,Term2 = Diff) :-
+	sub_op_list(Rhs,Term1,Diff).
+
+isolax(1,(Term1-Term2) = Rhs,Term1 = Sum) :-
+	sum_op_list(Rhs,Term2,Sum).
+isolax(2,(Term1-Term2) = Rhs,Term2 = Diff) :-
+	sub_op_list(Term1,Rhs,Diff).
+
+isolax(1,(Term1*Term2) = Rhs,Term1 = Div) :-
+	div_op_list(Rhs,Term2,Div).
+isolax(2,(Term1*Term2) = Rhs,Term2 = Div) :-
+	div_op_list(Rhs,Term1,Div).
+
+isolax(1,(Term1/Term2) = Rhs,Term1 = Prod) :-
+	mul_op_list(Rhs,Term2,Prod).
+isolax(2,(Term1/Term2) = Rhs,Term2 = Div) :-
+	div_op_list(Term1,Rhs,Div).
+
+isolax(1,(Term1^Term2) = Rhs,Term1 = Result) :-
+	number(Term2),
+	0 is Term2 mod 2,
+	div_op_list(1,Term2,Esponent),
+	pow_op(Rhs,Esponent,Result).
+isolax(1,(Term1^Term2) = Rhs,Term1 = Result) :-
+	number(Term2),
+	0 is Term2 mod 2,
+	div_op_list(1,Term2,Esponent),
+	pow_op(Rhs,Esponent,Power),
+	minus(Power,Result).
+isolax(1,(Term1^Term2) = Rhs,Term1 = Result) :-
+	number(Term2),
+	1 is Term2 mod 2,
+	div_op_list(1,Term2,Esponent),
+	pow_op(Rhs,Esponent,Result).
+isolax(1,(Term1^Term2) = Rhs,Term1 = Result) :-
+	\+ number(Term2),
+	div_op_list(1,Term2,Esponent),
+	pow_op(Rhs,Esponent,Result).
+isolax(2,(Term1^Term2) = Rhs,Term2 = log(base(Term1),Rhs)).
+
+isolax(1,sin(U) = V,U = arcsin(V)).
+isolax(1,sin(U) = V,U = 180 - arcsin(V)).
+isolax(1,cos(U) = V,U = arccos(V)).
+isolax(1,cos(U) = V,U = -arccos(V)).
+
+% Polynomial
+
+polynomial(X,X) :- !.
+polynomial(Term,X) :- 
+	constant(Term,X),
+	!.
+polynomial(Term1+Term2,X) :- 
+    !,
+	polynomial(Term1,X),
+	polynomial(Term2,X).
+polynomial(Term1-Term2,X) :- 
+    !,
+	polynomial(Term1,X),
+	polynomial(Term2,X).
+polynomial(Term1*Term2,X) :- 
+    !,
+	polynomial(Term1,X),
+	polynomial(Term2,X).
+polynomial(Term1/Term2,X) :- 
+    !,
+	polynomial(Term1,X),
+	polynomial(Term2,X).	
+polynomial(Term^N,X) :-
+	integer(N),
+	polynomial(Term,X).
+polynomial(Term^N,X) :-
+	\+ integer(N),
+	free_of(X,Term),
+	polynomial(Term,X).
+
+polynomial_normal_form(Polynomial,X,NormalForm) :-
+    polynomial_form(Polynomial,X,PolyForm),
+	remove_zero_terms(PolyForm,NormalForm),
+	!.
+
+polynomial_form(X,X,[(1,1)]).
+polynomial_form(X^N,X,[(1,N)]).
+
+polynomial_form(A^N,X,[(A^N,0)]) :-
+	free_of(X,A).
+
+polynomial_form(A^2,X,PolyForm) :-
+	\+ is_product(A),
+	\+ free_of(X,A),
+	develop_square(A,Term),
+	polynomial_form(Term,X,PolyForm).
+
+polynomial_form(A^N,X,PolyForm) :-
+	is_product(A),
+	pow_op_list(A,N,Term),
+	polynomial_form(Term,X,PolyForm).
+
+polynomial_form(X^N/X^M,X,[(1,D)]) :-
+	D is N - M.
+polynomial_form(C*X^N/X^M,X,[(C,D)]) :-
+	free_of(X,C),
+	D is N - M.
+polynomial_form(X^N*C/X^M,X,[(C,D)]) :-
+	free_of(X,C),
+	D is N - M.
+polynomial_form(X^N/X^M*C,X,[(C,D)]) :-
+	free_of(X,C),
+	D is N - M.
+polynomial_form(X/C,X,[((1/C),1)]) :-
+	free_of(X,C).
+polynomial_form(X^N/C,X,[((1/C),N)]) :-
+	free_of(X,C).
+
+polynomial_form(Term1+Term2,X,PolyForm) :-
+	polynomial_form(Term1,X,PolyForm1),
+    polynomial_form(Term2,X,PolyForm2),
+    add_polynomials(PolyForm1,PolyForm2,PolyForm).
+polynomial_form(Term1-Term2,X,PolyForm) :-
+    polynomial_form(Term1,X,PolyForm1),
+    polynomial_form(Term2,X,PolyForm2),
+    subtract_polynomials(PolyForm1,PolyForm2,PolyForm).
+
+polynomial_form((Term1/Term2)*Term3,X,[((Term2+0),100)]) :-
+	Term2 \= X,
+	\+ free_of(X,Term2).
+	
+polynomial_form(Term1*Term2,X,PolyForm) :-
+    polynomial_form(Term1,X,PolyForm1),
+    polynomial_form(Term2,X,PolyForm2),
+    multiply_polynomials(PolyForm1,PolyForm2,PolyForm).	
+
+polynomial_form(Term/Term,X,[(1,0)]).
+polynomial_form(C*Term/Term,X,[(C,0)]) :-
+	free_of(X,C).
+polynomial_form(Term/Term*C,X,[(C,0)]) :-
+	free_of(X,C).
+polynomial_form(Term*C/Term,X,[(C,0)]) :-
+	free_of(X,C).
+polynomial_form(C*Term/Term,X,PolyForm) :-
+	\+ free_of(X,C),
+	polynomial_form(C,X,PolyForm).
+polynomial_form(Term/Term*C,X,PolyForm) :-
+	\+ free_of(X,C),
+	polynomial_form(C,X,PolyForm).
+polynomial_form(Term*C/Term,X,PolyForm) :-
+	\+ free_of(X,C),
+	polynomial_form(C,X,PolyForm).	
+
+polynomial_form(Term^N/Term,X,[(Term1,0)]) :-
+	free_of(X,Term),
+	D is N - 1,
+	write_power(Term,D,Term1).
+polynomial_form(Term/Term^M,X,[(Term1,0)]) :-
+	free_of(X,Term),
+	D is 1 - M,
+	write_power(Term,D,Term1).
+polynomial_form(Term^N/Term^M,X,[(Term1,0)]) :-
+	free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1).
+polynomial_form(Term^N/Term,X,PolyForm) :-
+	\+ free_of(X,Term),
+	D is N - 1,
+	write_power(Term,D,Term1),
+	polynomial_form(Term1,X,PolyForm).
+polynomial_form(Term/Term^M,X,PolyForm) :-
+	\+ free_of(X,Term),
+	D is 1 - M,
+	write_power(Term,D,Term1),
+	polynomial_form(Term1,X,PolyForm).
+polynomial_form(Term^N/Term^M,X,PolyForm) :-
+	\+ free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(Term1,X,PolyForm).
+
+polynomial_form(C*Term^N/Term^M,X,[((C*Term1),0)]) :-
+	free_of(X,C),
+	free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1).
+polynomial_form(Term^N/Term^M*C,X,[((C*Term1),0)]) :-
+	free_of(X,C),
+	free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1).
+polynomial_form(Term^N*C/Term^M,X,[((C*Term1),0)]) :-
+	free_of(X,C),
+	free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1).
+polynomial_form(C*Term^N/Term^M,X,PolyForm) :-
+	\+ free_of(X,C),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(C*Term1,X,PolyForm).
+polynomial_form(Term^N/Term^M*C,X,PolyForm) :-
+	\+ free_of(X,C),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(C*Term1,X,PolyForm).
+polynomial_form(Term^N*C/Term^M,X,PolyForm) :-
+	\+ free_of(X,C),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(C*Term1,X,PolyForm).
+polynomial_form(C*Term^N/Term^M,X,PolyForm) :-
+	\+ free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(C*Term1,X,PolyForm).
+polynomial_form(Term^N/Term^M*C,X,PolyForm) :-
+	\+ free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(C*Term1,X,PolyForm).
+polynomial_form(Term^N*C/Term^M,X,PolyForm) :-
+	\+ free_of(X,Term),
+	D is N - M,
+	write_power(Term,D,Term1),
+	polynomial_form(C*Term1,X,PolyForm).
+	
+polynomial_form(Term/X,X,PolyForm) :- 
+    polynomial_form(Term*X^(-1),X,PolyForm).
+polynomial_form(Term1/Term2,X,[((Term2+0),100)]) :-
+	\+ free_of(X,Term2).
+
+polynomial_form(Term/Term,X,[(1,0)]) :-
+	free_of(X,Term),
+	!.
+polynomial_form(Term1/Term2,X,[((Term1/Term2),0)]) :-
+	free_of(X,Term1),
+	free_of(X,Term2),
+	!.
+polynomial_form(Term1/Term2,X,PolyForm) :-
+	\+ free_of(X,Term1),
+	free_of(X,Term2),
+	normalize(Term1,1/Term2,Term3),
+	polynomial_form(Term3,X,PolyForm),
+	!.
+
+polynomial_form(Term^N,X,PolyForm) :-
+	!,
+    polynomial_form(Term,X,PolyForm1),
+    binomial(PolyForm1,N,PolyForm).
+	
+polynomial_form(Term,X,[(Term,0)]) :-
+    free_of(X,Term),
+	!.
+
+remove_zero_terms([(0,N)|Poly],Poly1) :-
+    !,
+	remove_zero_terms(Poly,Poly1).
+remove_zero_terms([(C,N)|Poly],[(C,N)|Poly1]) :-
+    C \== 0,
+	!,
+	remove_zero_terms(Poly,Poly1).
+remove_zero_terms([],[]).
+
+add_polynomials([],Poly,Poly) :- !.
+add_polynomials(Poly,[],Poly) :- !.
+add_polynomials([(Ai,Ni)|Poly1],[(Aj,Nj)|Poly2],[(Ai,Ni)|Poly]) :-
+    Ni > Nj,
+	!,
+	add_polynomials(Poly1,[(Aj,Nj)|Poly2],Poly).
+add_polynomials([(Ai,Ni)|Poly1],[(Aj,Nj)|Poly2],[(A,Ni)|Poly]) :-
+    Ni =:= Nj,
+	Ni \= 100,
+	!,
+	sum_op(Ai,Aj,A),
+	add_polynomials(Poly1,Poly2,Poly).
+add_polynomials([(Ai,Ni)|Poly1],[(Aj,Nj)|Poly2],[(Ai,Ni)|Poly]) :-
+    Ni =:= Nj,
+	Ni =:= 100,
+	!,
+	add_polynomials(Poly1,Poly2,Poly).	
+add_polynomials([(Ai,Ni)|Poly1],[(Aj,Nj)|Poly2],[(Aj,Nj)|Poly]) :-
+    Ni < Nj,
+	!,
+	add_polynomials([(Ai,Ni)|Poly1],Poly2,Poly).
+	
+subtract_polynomials(Poly1,Poly2,Poly) :-
+    multiply_single(Poly2,(-1,0),Poly3),
+    add_polynomials(Poly1,Poly3,Poly),
+	!.
+
+multiply_single([(C1,N1)|Poly1],(C,N),[(C2,N2)|Poly]) :-
+    mul_op(C,C1,C2),
+	N2 is N1+N,
+	multiply_single(Poly1,(C,N),Poly).
+multiply_single([],Factor,[]).
+
+multiply_polynomials([(C,N)|Poly1],Poly2,Poly) :-
+    multiply_single(Poly2,(C,N),Poly3),
+    multiply_polynomials(Poly1,Poly2,Poly4),
+	add_polynomials(Poly3,Poly4,Poly).
+multiply_polynomials([],P,[]).
+
+binomial(Poly,1,Poly).
+
+normalize_and_solve(Expr,[((Term+0),100)|Poly],X,Solution) :-
+	normalize(Expr,Term,Expr1),
+	polynomial_normal_form(Expr1,X,PolyForm),
+	normalize_and_solve(Expr1,PolyForm,X,Solution).
+normalize_and_solve(_,PolyForm,X,Solution) :-
+	solve_polynomial_equation(PolyForm,X,Solution).
+
+normalize(E1+E2,Term,Expr1+Expr2) :-
+	normalize(E1,Term,Expr1),
+	normalize(E2,Term,Expr2),
+	!.
+normalize(E1-E2,Term,Expr1-Expr2) :-
+	normalize(E1,Term,Expr1),
+	normalize(E2,Term,Expr2),
+	!.
+normalize(E1/Term*E3,Term,E1*E3) :- !.
+normalize(E1*E2,Term,E1*E2*Term) :- !.
+normalize(E1/Term,Term,E1) :- !.
+normalize(E1/E2,Term,Term*E1/E2) :- !.
+normalize(E,Term,E*Term) :- !.
+
+solve_polynomial_equation(PolyEquation,X,X=Solution) :-
+	reverse(PolyEquation,[(_,N)|T]),
+	N < 0,
+	!,
+	N1 is -N,
+	positive_exponents(N1,PolyEquation,PolyEquationPos),
+	solve_polynomial_equation(PolyEquationPos,X,X=Solution).
+solve_polynomial_equation(PolyEquation,X,X = R) :-
+    linear(PolyEquation),
+	!,
+    pad(PolyEquation,[(A,1),(B,0)]),
+	simplify_term(A,A1),
+	A1 \= 0,
+	simplify_term(B,B1),
+	div_op_list(B1,A1,R0),
+	minus(R0,R).
+solve_polynomial_equation(PolyEquation,X,X=Solution) :-
+    quadratic(PolyEquation),
+	!,
+	pad(PolyEquation,[(A,2),(B,1),(C,0)]),
+	simplify_term(A,A1),
+	simplify_term(B,B1),
+	simplify_term(C,C1),
+    discriminant(A1,B1,C1,Discriminant),
+    root(A1,B1,C1,Discriminant,Solution).
+
+discriminant(A,B,C,D) :-
+	mul_op_list(B,B,RB),
+	mul_op_list(4,A,R4A),
+	mul_op_list(R4A,C,R4AC),
+	sub_op_list(RB,R4AC,D).
+
+root(0,B,C,_,R) :-
+	minus(C,CM),
+	div_op_list(CM,B,R),
+	!.
+root(A,0,C,_,R) :-
+	minus(C,CM),
+	div_op_list(CM,A,Div),
+	sqrt_op_list(Div,R).
+root(A,0,C,_,R) :-
+	minus(C,CM),
+	div_op_list(CM,A,Div),
+	sqrt_op_list(Div,Pow),
+	minus(Pow,R),
+	!.
+root(A,B,0,_,0).
+root(A,B,0,_,R) :-
+	minus(B,BM),
+	div_op_list(BM,A,R),
+	!.
+root(A,B,C,0,R) :-
+	minus(B,BM),
+	mul_op_list(2,A,A2),
+	div_op_list(BM,A2,R),
+	!.
+root(A,B,C,D,R) :-
+	minus(B,BM),
+	mul_op_list(2,A,A2),
+	sqrt_op_list(D,SQRTD),
+	sum_op_list(BM,SQRTD,R0),
+	div_op_list(R0,A2,R).
+root(A,B,C,D,R) :-
+	minus(B,BM),
+	mul_op_list(2,A,A2),
+	sqrt_op_list(D,SQRTD),
+	sub_op_list(BM,SQRTD,R0),
+	div_op_list(R0,A2,R).
+	
+pad([(C,N)|Poly],[(C,N)|Poly1]) :-
+    !,
+	pad(Poly,Poly1).
+pad(Poly,[(0,N)|Poly1]) :-
+    pad(Poly,Poly1).
+pad([],[]).
+
+linear([(Coeff,1)|Poly]).        
+
+quadratic([(Coeff,2)|Poly]).
+
+positive_exponents(_,[],[]).
+positive_exponents(E,[(C,N)|Poly],[(C,N1)|Poly1]) :-
+	N1 is N+E,
+	positive_exponents(E,Poly,Poly1).
+
+%%%%%%%%%%%%%%%%%%%%%%	
+% Utilities predicates
+%%%%%%%%%%%%%%%%%%%%%%
+
+subterm(Term,Term).
+subterm(Sub,Term) :-
+    compound(Term),
+	functor(Term,F,N),
+	subterm(N,Sub,Term).
+subterm(N,Sub,Term) :-
+	arg(N,Term,Arg),
+	subterm(Sub,Arg).
+subterm(N,Sub,Term) :-
+    N > 0,
+    N1 is N - 1,
+    subterm(N1,Sub,Term).
+
+remove_duplicates(Xs,Ys) :-
+	no_doubles(Xs,Ys).
+
+no_doubles([X|Xs],Ys) :-
+    member(X,Xs),
+	no_doubles(Xs,Ys).
+no_doubles([X|Xs],[X|Ys]) :-
+    \+ member(X,Xs),
+	no_doubles(Xs,Ys).
+no_doubles([],[]).
+
+single_occurrence(Subterm,Term) :-
+	occurrence(Subterm,Term,N),
+	!,
+	N=1.
+
+occurrence(Term,Term,1) :- !.
+occurrence(Sub,Term,N) :-
+	compound(Term),
+	!,
+	functor(Term,F,M),
+	occurrence(M,Sub,Term,0,N).
+occurrence(Sub,Term,0) :-
+	Term \== Sub.
+occurrence(M,Sub,Term,N1,N2) :-
+	M > 0,
+	!,
+	arg(M,Term,Arg),
+	occurrence(Sub,Arg,N),
+	N3 is N+N1,
+	M1 is M-1,
+	occurrence(M1,Sub,Term,N3,N2).
+occurrence(0,Sub,Term,N,N).
+
+position(Term,Term,[]) :- !.
+position(Sub,Term,Path) :-
+	compound(Term),
+	functor(Term,F,N),
+	position(N,Sub,Term,Path),
+	!.
+position(N,Sub,Term,[N|Path]) :-
+   arg(N,Term,Arg),
+   position(Sub,Arg,Path).
+position(N,Sub,Term,Path) :- 
+   N > 1,
+   N1 is N-1,
+   position(N1,Sub,Term,Path).
+   
+free_of(Subterm,Term) :-
+    occurrence(Subterm,Term,N),
+	!,
+	N=0.   
+
+constant(-sin(T),X) :-
+	free_of(X,T),
+	!.
+constant(sin(T),X) :-
+	free_of(X,T),
+	!.
+constant(-cos(T),X) :-
+	free_of(X,T),
+	!.
+constant(cos(T),X) :-
+	free_of(X,T),
+	!.
+constant(-tan(T),X) :-
+	free_of(X,T),
+	!.
+constant(tan(T),X) :-
+	free_of(X,T),
+	!.
+constant(-log(base(B),T),X) :-
+	free_of(X,B),
+	free_of(X,T),
+	!.
+constant(log(base(B),T),X) :-
+	free_of(X,B),
+	free_of(X,T),
+	!.
+constant(-T,X) :-
+	\+ number(T),
+	!.
+constant(T,X) :-
+	atomic(T),
+	!.
+
+is_product(-cos(T)) :- !.	
+is_product(cos(T)) :- !.
+is_product(-sin(T)) :- !.
+is_product(sin(T)) :- !.
+is_product(-tan(T)) :- !.
+is_product(tan(T)) :- !.
+is_product(-log(base(B),T)) :- !.
+is_product(log(base(B),T)) :- !.
+is_product(T) :-
+	is_product_1(T,0).
+	
+is_product_1(T,_) :-
+	simple_factor(T),
+	!.
+is_product_1(T,1) :-
+	composed_factor(T),
+	!.
+is_product_1(T1*T2,_) :-
+	simple_factor(T2),
+	is_product_1(T1,1).
+is_product_1(T1/T2,_) :-
+	simple_factor(T2),
+	is_product_1(T1,1).
+is_product_1(T1*T2,_) :-
+	composed_factor(T2),
+	is_product_1(T1,1).
+is_product_1(T1/T2,_) :-
+	composed_factor(T2),
+	is_product_1(T1,1).
+	
+simple_factor(-F) :-
+	atomic(F).
+simple_factor(F) :-
+	atomic(F).
+simple_factor(-1/F) :-
+	atomic(F).
+simple_factor(1/F) :-
+	atomic(F).
+simple_factor(-F^N) :-
+	atomic(F).
+simple_factor(F^N) :-
+	atomic(F).
+simple_factor(-1/F^N) :-
+	atomic(F).
+simple_factor(1/F^N) :-
+	atomic(F).
+
+composed_factor(F) :-
+	compound(F).
+
+first_factor(FL*FR,F1,PP*FR) :-
+	first_factor(FL,F1,PP),
+	!.
+first_factor(FL/FR,F1,PP/FR) :-
+	first_factor(FL,F1,PP),
+	!.
+first_factor(F,F,F1) :-
+	number(F),
+	F < 0,
+	F1 is -F,
+	!.
+first_factor(-F,-F,F) :- !.
+first_factor(F,F,F) :- !.
+
+write_power(Term,1,Term).
+write_power(Term,D,Term^D).
+
+   
+name_new(A,L) :-
+	number(A),
+	number_codes(A,L1),
+	L=L1,
+	!.
+name_new(A,L) :-
+	\+ number(A),
+	atom_codes(A,L),
+	!.
+
+real_form(I,R) :-
+	integer(I),
+	R is I * 1.0,
+	!.
+real_form(R,R) :- !.
+
+% Operazioni aritmetiche
+	
+minus(X,Y) :-
+	number(X),
+	!,
+	Y is -X.
+minus(-X,X) :-
+	atom(X),
+	!.
+minus(X,-X) :-
+	atom(X),
+	!.
+
+minus(X,T) :-
+	compound(X),
+	count_minus(X,0,N,T),
+	1 is N mod 2,
+	!.
+minus(X,T1) :-
+	compound(X),
+	count_minus(X,0,N,T),
+	change_sign(T,T1),
+	0 is N mod 2,
+	!.
+
+count_minus(-X,A,N,T) :-
+	A1 is A + 1,
+	count_minus(X,A1,N,T),
+	!.
+count_minus(X,A,A,X) :- !.	
+
+
+sum_op(0,A,A) :- !.
+sum_op(A,0,A) :- !.
+sum_op(A1,A2,R) :-
+	number(A1),
+	number(A2),
+	!,
+	R is A1 + A2.
+sum_op(A1,A2,A1+A2) :-
+	\+ number(A1),
+	number(A2),
+	A2 > 0,
+	!.
+sum_op(A1,A2,A1-A3) :-
+	\+ number(A1),
+	number(A2),
+	A2 < 0,
+	A3 is -A2,
+	!.
+sum_op(A1,A2,A1+P) :-
+	count_minus(A2,0,N,T),
+	1 is N mod 2,
+	is_product(T),
+	first_factor(T,-F,P),
+	!.
+sum_op(A1,A2,A1+P) :-
+	count_minus(A2,0,N,T),
+	1 is N mod 2,
+	is_product(T),
+	first_factor(T,F,P),
+	number(F),
+	F < 0,
+	!.
+sum_op(A1,A2,A1-T) :-
+	count_minus(A2,0,N,T),
+	1 is N mod 2,
+	!.
+sum_op(A1,A2,A1-P) :-
+	count_minus(A2,0,N,T),
+	0 is N mod 2,
+	is_product(T),
+	first_factor(T,-F,P),
+	!.
+sum_op(A1,A2,A1-P) :-
+	count_minus(A2,0,N,T),
+	0 is N mod 2,
+	is_product(T),
+	first_factor(T,F,P),
+	number(F),
+	F < 0,
+	!.
+sum_op(A1,A2,A1+T) :-
+	count_minus(A2,0,N,T),
+	0 is N mod 2,
+	!.
+	
+sub_op(0,A,A1) :-
+	minus(A,A1),
+	!.
+sub_op(A,0,A) :- !.
+sub_op(A1,A2,R) :-
+	number(A1),
+	number(A2),
+	!,
+	R is A1 - A2.
+sub_op(A,A,0) :-
+	\+ number(A),
+	!.
+sub_op(A1,A2,A1-A2) :-
+	\+ number(A1),
+	number(A2),
+	A2 > 0,
+	!.
+sub_op(A1,A2,A1+A3) :-
+	\+ number(A1),
+	number(A2),
+	A2 < 0,
+	A3 is -A2,
+	!.
+sub_op(A1,A2,A1-P) :-
+	count_minus(A2,0,N,T),
+	1 is N mod 2,
+	is_product(T),
+	first_factor(T,-F,P),
+	!.
+sub_op(A1,A2,A1-P) :-
+	count_minus(A2,0,N,T),
+	1 is N mod 2,
+	is_product(T),
+	first_factor(T,F,P),
+	number(F),
+	F < 0,
+	!.	
+sub_op(A1,A2,A1+T) :-
+	count_minus(A2,0,N,T),
+	1 is N mod 2,
+	!.
+sub_op(A1,A2,A1+P) :-
+	count_minus(A2,0,N,T),
+	0 is N mod 2,
+	is_product(T),
+	first_factor(T,-F,P),
+	!.
+sub_op(A1,A2,A1+P) :-
+	count_minus(A2,0,N,T),
+	0 is N mod 2,
+	is_product(T),
+	first_factor(T,F,P),
+	number(F),
+	F < 0,
+	!.	
+sub_op(A1,A2,A1-T) :-
+	count_minus(A2,0,N,T),
+	0 is N mod 2,
+	!.	
+
+
+mul_op(0,A,0) :- !.
+mul_op(A,0,0) :- !.	
+mul_op(1,A,A) :- !.
+mul_op(A,1,A) :- !.
+mul_op(-1,A,A1) :-
+	minus(A,A1),
+	!.
+mul_op(A,-1,A1) :-
+	minus(A,A1),
+	!.
+mul_op(-A^(-1),A,-1) :-
+	\+ number(A),
+	!.
+mul_op(A^(-1),-A,-1) :-
+	\+ number(A),
+	!.
+mul_op(-A^(-1),-A,1) :-
+	\+ number(A),
+	!.
+mul_op(A^(-1),A,1) :-
+	\+ number(A),
+	!.
+mul_op(-A^N,A,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(A^N,-A,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(-A^N,-A,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(A^N,A,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(-A^N,A,-A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(A^N,-A,-A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(-A^N,-A,A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(A^N,A,A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(-A,A^(-1),-1) :-
+	\+ number(A),
+	!.
+mul_op(A,-A^(-1),-1) :-
+	\+ number(A),
+	!.
+mul_op(-A,-A^(-1),1) :-
+	\+ number(A),
+	!.
+mul_op(A,A^(-1),1) :-
+	\+ number(A),
+	!.
+mul_op(-A,A^N,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(A,-A^N,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(-A,-A^N,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(A,A^N,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N + 1,
+	!.
+mul_op(-A,A^N,-A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(A,-A^N,-A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(-A,-A^N,A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(A,A^N,A^N1) :-
+	\+ number(A),
+	N1 = N + 1,
+	!.
+mul_op(-A^N,A^M,-1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	S = 0,
+	!.
+mul_op(A^N,-A^M,-1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	S = 0,
+	!.
+mul_op(-A^N,-A^M,1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	S = 0,
+	!.
+mul_op(A^N,A^M,1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	S = 0,
+	!.
+mul_op(-A^N,A^M,-A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	!.
+mul_op(A^N,-A^M,-A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	!.
+mul_op(-A^N,-A^M,A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	!.
+mul_op(A^N,A^M,A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N + M,
+	!.
+mul_op(-A^N,A^M,-A^S) :-
+	\+ number(A),
+	sum_op(N,M,S),
+	!.
+mul_op(A^N,-A^M,-A^S) :-
+	\+ number(A),
+	sum_op(N,M,S),
+	!.
+mul_op(-A^N,-A^M,A^S) :-
+	\+ number(A),
+	sum_op(N,M,S),
+	!.
+mul_op(A^N,A^M,A^S) :-
+	\+ number(A),
+	sum_op(N,M,S),
+	!.
+mul_op(A,-A,-A^2) :-
+	\+ number(A),
+	!.
+mul_op(-A,A,-A^2) :-
+	\+ number(A),
+	!.
+mul_op(-A,-A,A^2) :-
+	\+ number(A),
+	!.
+mul_op(A,A,A^2) :-
+	\+ number(A),
+	!.
+mul_op(A^N,A,A^N1) :-
+	number(A),
+	integer(N),
+	N1 is N + 1,
+	!.
+mul_op(A,A^N,A^N1) :-
+	number(A),
+	integer(N),
+	N1 is N + 1,
+	!.
+mul_op(A^N,A^M,A^N1) :-
+	number(A),
+	integer(N),
+	integer(M),
+	N1 is N + M,
+	!.
+mul_op(A1^N,A2,A2^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 > 0,
+	integer(N),
+	N1 is N + 1,
+	!.
+mul_op(A1^N,A2,A1^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 < 0,
+	integer(N),
+	N1 is N + 1,
+	!.
+mul_op(A1,A2^N,A2^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 > 0,
+	integer(N),
+	N1 is N + 1,
+	!.
+mul_op(A1,A2^N,A1^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 < 0,
+	integer(N),
+	N1 is N + 1,
+	!.
+mul_op(A1^N,A2^M,A2^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 > 0,
+	integer(N),
+	integer(M),
+	N1 is N + M,
+	!.
+mul_op(A1^N,A2^M,A1^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 < 0,
+	integer(N),
+	integer(M),
+	N1 is N + M,
+	!.
+mul_op(A1,A2,R) :-
+	number(A1),
+	number(A2),
+	!,
+	R is A1 * A2.
+mul_op(-A1,-A2,A1*A2) :-
+	!.
+mul_op(-A1,A2,A3*A1) :-
+	number(A2),
+	A2 < 0,
+	A3 is -A2,
+	!.
+mul_op(-A1,A2,A3*A1) :-
+	number(A2),
+	A2 > 0,
+	A3 is -A2,
+	!.
+mul_op(A1,A2,A2*A1) :-
+	number(A2),
+	A2 < 0,
+	!.
+mul_op(-A1,A2,-A1*A2) :-
+	!.
+mul_op(A1,-A2,A3*A2) :-
+	number(A1),
+	A1 < 0,
+	A3 is -A1,
+	!.
+mul_op(A1,-A2,A3*A2) :-
+	number(A1),
+	A1 > 0,
+	A3 is -A1,
+	!.
+mul_op(A1,A2,A1*A2) :-
+	number(A1),
+	A1 < 0,
+	!.
+mul_op(A1^N,-A2,A3^N*A2) :-
+	number(A1),
+	A1 < 0,
+	A3 is -A1,
+	!.
+mul_op(A1,-A2,-A1*A2) :-
+	!.
+mul_op(A1,A2,A1*A2) :-
+	!.
+
+
+div_op(0,A,0) :- !.
+div_op(1,-A,-1/A) :-
+	\+ number(A),
+	!.
+div_op(1,A,1/A) :-
+	\+ number(A),
+	!.
+div_op(-1,-A,1/A) :-
+	\+ number(A),
+	!.
+div_op(-1,A,-1/A) :-
+	\+ number(A),
+	!.
+div_op(-A,1,-A) :-
+	\+ number(A),
+	!.
+div_op(A,1,A) :-
+	\+ number(A),
+	!.
+div_op(-A,-1,A) :-
+	\+ number(A),
+	!.	
+div_op(A,-1,-A) :-
+	\+ number(A),
+	!.	
+div_op(A1,A2,R) :-
+	number(A1),
+	number(A2),
+	real_form(A1,A1r),
+	real_form(A2,A2r),
+	!,
+	R is A1r / A2r.
+div_op(-A,A,-1) :-
+	\+ number(A),
+	!.
+div_op(A,-A,-1) :-
+	\+ number(A),
+	!.
+div_op(A,A,1) :-
+	\+ number(A),
+	!.
+div_op(-A^N,A,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(A^N,-A,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(-A^N,-A,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(A^N,A,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(-A^N,A,-A^N1) :-
+	\+ number(A),
+	N1 = N - 1,
+	!.
+div_op(A^N,-A,-A^N1) :-
+	\+ number(A),
+	N1 = N - 1,
+	!.
+div_op(-A^N,-A,A^N1) :-
+	\+ number(A),
+	N1 = N - 1,
+	!.
+div_op(A^N,A,A^N1) :-
+	\+ number(A),
+	N1 = N - 1,
+	!.
+div_op(-A,A^N,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(A,-A^N,-A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(-A,-A^N,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(A,A^N,A^N1) :-
+	\+ number(A),
+	number(N),
+	N1 is N - 1,
+	!.
+div_op(-A,A^N,-A^N1) :-
+	\+ number(A),
+	sub_op(1,N,N1),
+	!.
+div_op(A,-A^N,-A^N1) :-
+	\+ number(A),
+	sub_op(1,N,N1),
+	!.
+div_op(-A,-A^N,A^N1) :-
+	\+ number(A),
+	sub_op(1,N,N1),
+	!.
+div_op(A,A^N,A^N1) :-
+	\+ number(A),
+	sub_op(1,N,N1),
+	!.
+div_op(-A^N,A^M,-1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 0,
+	!.
+div_op(A^N,-A^M,-1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 0,
+	!.
+div_op(-A^N,-A^M,1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 0,
+	!.
+div_op(A^N,A^M,1) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 0,
+	!.
+div_op(-A^N,A^M,-A) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 1,
+	!.
+div_op(A^N,-A^M,-A) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 1,
+	!.
+div_op(-A^N,-A^M,A) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 1,
+	!.
+div_op(A^N,A^M,A) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	S = 1,
+	!.	
+div_op(-A^N,A^M,-A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	!.
+div_op(A^N,-A^M,-A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	!.
+div_op(-A^N,-A^M,A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	!.
+div_op(A^N,A^M,A^S) :-
+	\+ number(A),
+	number(N),
+	number(M),
+	S is N - M,
+	!.
+div_op(-A^N,A^M,-A^S) :-
+	\+ number(A),
+	sub_op(N,M,S),
+	!.
+div_op(A^N,-A^M,-A^S) :-
+	\+ number(A),
+	sub_op(N,M,S),
+	!.
+div_op(-A^N,-A^M,A^S) :-
+	\+ number(A),
+	sub_op(N,M,S),
+	!.
+div_op(A^N,A^M,A^S) :-
+	\+ number(A),
+	sub_op(N,M,S),
+	!.
+div_op(A^N,A,A^N1) :-
+	number(A),
+	integer(N),
+	N1 is N - 1,
+	!.
+div_op(A,A^N,A^N1) :-
+	number(A),
+	integer(N),
+	N1 is N - 1,
+	!.
+div_op(A^N,A^M,A^N1) :-
+	number(A),
+	integer(N),
+	integer(M),
+	N1 is N - M,
+	!.
+div_op(A1^N,A2,A2^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 > 0,
+	integer(N),
+	N1 is N - 1,
+	!.
+div_op(A1^N,A2,A1^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 < 0,
+	integer(N),
+	N1 is N - 1,
+	!.
+div_op(A1,A2^N,A2^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 > 0,
+	integer(N),
+	N1 is 1 - N,
+	!.
+div_op(A1,A2^N,A1^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 < 0,
+	integer(N),
+	N1 is 1 - N,
+	!.
+div_op(A1^N,A2^M,A2^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 > 0,
+	integer(N),
+	integer(M),
+	N1 is N - M,
+	!.
+div_op(A1^N,A2^M,A1^N1) :-
+	number(A1),
+	number(A2),
+	A1 is -A2,
+	A1 < 0,
+	integer(N),
+	integer(M),
+	N1 is N - M,
+	!.	
+div_op(A1,A2,A1/A2) :-
+	!.
+
+
+pow_op(0,N,0) :- !.
+pow_op(1,N,1) :- !.
+pow_op(B,0,1) :- !.
+pow_op(B,1,B) :- !.
+pow_op(B,N,P) :-
+	number(B),
+	integer(N),		
+	N1 is N-1,
+	pow_op(B,N1,P1),
+	mul_op(B,P1,P),
+	!.
+pow_op(B^N,M,B^P) :-
+	integer(N),
+	integer(M),
+	P is N * M,
+	!.
+pow_op(B^N,M,B^P) :-
+	mul_op(N,M,P),
+	!.	
+pow_op(B,N,B^N) :-
+	!.
+
+
+
+% Funzioni per la semplificazione
+
+simplify_term(-T,-T) :-
+	atomic(T),
+	!.
+simplify_term(T,T) :-
+	atomic(T),
+	!.
+simplify_term(T,TS) :-	
+	rewrite_subterms(T,TR),
+	collect(TR,TS).
+
+rewrite_subterms(E1+E2,Equation1+Equation2) :-
+	rewrite_subterms(E1,Equation1),
+	rewrite_subterms(E2,Equation2),
+	!.
+rewrite_subterms(E1-E2,Equation1-Equation2) :-
+	rewrite_subterms(E1,Equation1),
+	rewrite_subterms(E2,Equation2),
+	!.
+rewrite_subterms(E,E1) :- 
+	order_factors(E,E1),
+	!.
+
+
+order_factors(-sin(E),-sin(E1)) :-
+	simplify_term(E,E1),
+	!.
+order_factors(sin(E),sin(E1)) :-
+	simplify_term(E,E1),
+	!.
+order_factors(-cos(E),-cos(E1)) :-
+	simplify_term(E,E1),
+	!.
+order_factors(cos(E),cos(E1)) :-
+	simplify_term(E,E1),
+	!.
+order_factors(-tan(E),-tan(E1)) :-
+	simplify_term(E,E1),
+	!.
+order_factors(tan(E),tan(E1)) :-
+	simplify_term(E,E1),
+	!.
+order_factors(log(base(B),E),log(base(B1),E1)) :-
+	simplify_term(B,B1),
+	simplify_term(E,E1),
+	!.
+	
+order_factors(-E,-E) :-
+	atomic(E),
+	!.
+	
+order_factors(-E,-E1) :-
+	\+ atomic(E),
+	rewrite_subterms(E,Erw),
+	collect(Erw,E1),
+	!.
+order_factors(E,E) :-
+	atomic(E),
+	!.
+
+order_factors(A^N,A1) :-
+	rewrite_subterms(A,Arw),
+	collect(Arw,AC),
+	is_product(AC),
+	rewrite_subterms(N,Nrw),
+	collect(Nrw,NC),
+	pow_op_list(AC,NC,A1),
+	!.
+	
+order_factors(A^N,1) :-
+	rewrite_subterms(N,Nrw),
+	collect(Nrw,0),
+	!.
+order_factors(A^N,A1) :-
+	rewrite_subterms(N,Nrw),
+	collect(Nrw,1),
+	rewrite_subterms(A,Arw),
+	collect(Arw,Arw1),
+	lexicographical_order(Arw1,A1),
+	!.
+order_factors(A^N,1) :-
+	rewrite_subterms(N,Nrw),
+	collect(Nrw,0.0),
+	!.
+order_factors(A^N,A1) :-
+	rewrite_subterms(N,Nrw),
+	collect(Nrw,1.0),
+	rewrite_subterms(A,Arw),
+	collect(Arw,Arw1),
+	lexicographical_order(Arw1,A1),
+	!.	
+order_factors(A^N,A1^N1) :-
+	rewrite_subterms(A,Arw),
+	collect(Arw,Arw1),
+	lexicographical_order(Arw1,A1),
+	rewrite_subterms(N,Nrw),
+	collect(Nrw,Nrw1),
+	lexicographical_order(Nrw1,N1),
+	!.
+order_factors(1/A,1/A1) :-
+	rewrite_subterms(A,Arw),
+	collect(Arw,Arw1),
+	lexicographical_order(Arw1,A1),
+	!.
+	
+order_factors(E,E1) :-
+	in_list(E,L0,FactorsList),
+	separate(FactorsList,SingleFactorsList,ComposedFactorsList),
+	rewrite_composed_factors(ComposedFactorsList,ComposedFactorsListRW),
+	simplify_composed_factors(ComposedFactorsListRW,SFL0,SFL,CFL0,CFL),
+	sort_composed_factors(CFL,CFL1),
+	append(SingleFactorsList,SFL,NewSingleFactorsList),
+	ins_sort(NewSingleFactorsList,SingleFactorsListSorted),
+	compress(SingleFactorsListSorted,'+',SingleFactorsListCompressed),
+	compress_composed_factors(CFL1,ComposedFactorsListCompressed),
+	append(SingleFactorsListCompressed,ComposedFactorsListCompressed,NewFactorsList),
+	reverse(NewFactorsList,NewFactorsListReverse),
+	create_term_product(NewFactorsListReverse,E1).
+
+separate([],[],[]).
+separate([H|T],[H|TS],LC) :-
+	single_element(H),
+	separate(T,TS,LC).
+separate([H|T],LS,[H|TC]) :-
+	\+ single_element(H),
+	separate(T,LS,TC).
+	
+single_element('+').
+single_element('-').
+single_element(E^N) :-
+	atomic(E).
+single_element(1/E) :-
+	atomic(E).
+single_element(1/E^N) :-
+	atomic(E).
+single_element(E) :-
+	atomic(E).
+
+rewrite_composed_factors([],[]).
+rewrite_composed_factors([H|T],[HRW1|TRW]) :-
+	rewrite_subterms(H,HRW),
+	collect(HRW,HRW1),
+	rewrite_composed_factors(T,TRW).
+	
+simplify_composed_factors([],SFL0,SFL1,CFL0,CFL1) :-
+	append(SFL0,[],SFL1),
+	append(CFL0,[],CFL1),
+	!.
+simplify_composed_factors([H|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H),
+	in_list(H,L0,LS),
+	append(SFL0,LS,SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([1/H|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H),
+	in_list(H,L0,[S|LS]),
+	reciprocal(LS,LSR),
+	append(SFL0,[S|LSR],SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([(1/H)^N|T],SFL0,SFL,CFL0,CFL) :-
+	simplify_composed_factors([1/(H^N)|T],SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([1/H^N|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H),
+	in_list(H,L0,[S|LS]),
+	n_power(LS,N,LSN),
+	reciprocal(LSN,LSR),
+	append(SFL0,[S|LSR],SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([H1/H2|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H1),
+	is_simple_product(H2),
+	in_list(H1,L01,LS1),
+	in_list(H2,L02,[S|LS2]),
+	reciprocal(LS2,LS2R),
+	append(LS1,[S|LS2R],LS3),
+	append(SFL0,LS3,SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([(H1^N)/H2|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H1),
+	is_simple_product(H2),
+	in_list(H1,L01,LS1),
+	n_power(LS1,N,LS1N),
+	in_list(H2,L02,[S|LS2]),
+	reciprocal(LS2,LS2R),
+	append(LS1N,[S|LS2R],LS3),
+	append(SFL0,LS3,SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([H1/(H2^N)|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H1),
+	is_simple_product(H2),
+	in_list(H1,L01,LS1),
+	in_list(H2,L02,[S|LS2]),
+	reciprocal(LS2,LS2R),
+	n_power(LS2R,N,LS2N),
+	append(LS1,[S|LS2N],LS3),
+	append(SFL0,LS3,SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([(H1^N)/(H2^M)|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H1),
+	is_simple_product(H2),
+	in_list(H1,L01,LS1),
+	n_power(LS1,N,LS1N),
+	in_list(H2,L02,[S|LS2]),
+	reciprocal(LS2,LS2R),
+	n_power(LS2R,N,LS2N),
+	append(LS1N,[S|LS2N],LS3),
+	append(SFL0,LS3,SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([(H1/H2)^N|T],SFL0,SFL,CFL0,CFL) :-
+	simplify_composed_factors([(H1^N)/(H2^N)|T],SFL0,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([H^N|T],SFL0,SFL,CFL0,CFL) :-
+	is_simple_product(H),
+	in_list(H,L0,[S|LS]),
+	n_power(LS,N,LSN),
+	append(SFL0,[S|LSN],SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([H|T],SFL0,SFL,CFL0,CFL) :-
+	rewrite_subterms(H,H1),
+	collect(H1,H2),
+	is_simple_product(H2),
+	in_list(H2,L0,L),
+	append(SFL0,L,SFL1),
+	simplify_composed_factors(T,SFL1,SFL,CFL0,CFL),
+	!.
+simplify_composed_factors([H|T],SFL0,SFL,CFL0,CFL) :-
+	rewrite_subterms(H,H1),
+	collect(H1,H2),
+	append(CFL0,[H2],CFL1),
+	simplify_composed_factors(T,SFL0,SFL,CFL1,CFL),
+	!.
+	
+is_simple_product(T) :-
+	simple_factor(T).
+is_simple_product(T1*T2) :-
+	simple_factor(T2),
+	is_simple_product(T1).
+is_simple_product(T1/T2) :-
+	simple_factor(T2),
+	is_simple_product(T1).	
+
+reciprocal([],[]) :- !.
+reciprocal([1/H|T],[H|T1]) :-
+	reciprocal(T,T1),
+	!.
+reciprocal([H|T],[1/H|T1]) :-
+	reciprocal(T,T1),
+	!.
+
+n_power([],N,[]) :- !.
+n_power(['+'|T],N,T1) :- 
+	n_power(T,N,T1),
+	!.
+n_power(['-'|T],N,T1) :- 
+	n_power(T,N,T1),
+	!.
+n_power([1/(H^M)|T],N,[1/(H^S)|T1]) :-
+	S is M*N,
+	n_power(T,N,T1),
+	!.	
+n_power([1/H|T],N,[1/(H^N)|T1]) :-
+	n_power(T,N,T1),
+	!.
+n_power([H^M|T],N,[H^S|T1]) :-
+	S is M*N,
+	n_power(T,N,T1),
+	!.
+n_power([H|T],N,[H^N|T1]) :-
+	n_power(T,N,T1),
+	!.	
+
+sort_composed_factors([],[]).
+sort_composed_factors([H^N|T],[HO^N|TO]) :-
+	lexicographical_order(H,HO),
+	sort_composed_factors(T,TO).
+sort_composed_factors([1/(H^N)|T],[1/(HO^N)|TO]) :-
+	lexicographical_order(H,HO),
+	sort_composed_factors(T,TO).
+sort_composed_factors([1/H|T],[1/HO|TO]) :-
+	lexicographical_order(H,HO),
+	sort_composed_factors(T,TO).
+sort_composed_factors([H|T],[HO|TO]) :-
+	lexicographical_order(H,HO),
+	sort_composed_factors(T,TO).	
+	
+lexicographical_order(H,HO) :-
+	term_in_list(H,'+',L0,L),
+	quicksort(L,LO),
+	create_product_terms_in_list(LO,PTL),
+	reverse(PTL,PTLR),
+	create_expression(PTLR,HO).
+
+quicksort([],[]).
+quicksort([P|T],L) :-
+	split(P,T,LL,LR),
+	quicksort(LL,LLS),
+	quicksort(LR,LRS),
+	append(LLS,[P|LRS],L).
+
+split(_,[],[],[]).  
+split(P,[E|L],[E|LL],LR) :-
+	minor_equal_list_of_list(E,P,R),
+	R = 1,
+	split(P,L,LL,LR).
+split(P,[E|L],LL,[E|LR]) :-
+	minor_equal_list_of_list(P,E,R),
+	R = 1,
+	split(P,L,LL,LR).
+
+minor_equal_list_of_list([],[]).
+minor_equal_list_of_list([],L2).	
+minor_equal_list_of_list([H|T1],[H|T2],R) :-
+	minor_equal_list_of_list(T1,T2,R),
+	!.
+
+minor_equal_list_of_list([H1|T1],[H2|T2],R) :-
+	sortable_part(H1,SP1,N1),
+	sortable_part(H2,SP2,N2),
+	N1 < N2,
+	minor_equal_list_of_list(T1,T2,R),
+	!.	
+minor_equal_list_of_list([H1|T1],[H2|T2],0) :-
+	sortable_part(H1,SP1,N1),
+	sortable_part(H2,SP2,N2),
+	N1 > N2,
+	!.
+
+minor_equal_list_of_list([H1|T1],[H2|T2],R) :-
+	sortable_part(H1,SP1,N1),
+	sortable_part(H2,SP2,N2),
+	N1 = N2,
+	minor_equal_list(SP1,SP2,R),
+	!.
+
+sortable_part(log(base(B),H)^N,H,20) :- !.
+sortable_part(tan(H)^N,H,19) :- !.
+sortable_part(cos(H)^N,H,18) :- !.
+sortable_part(sin(H)^N,H,17) :- !.
+sortable_part(1/log(base(B),H)^N,H,16) :- !.
+sortable_part(1/tan(H)^N,H,15) :- !.
+sortable_part(1/cos(H)^N,H,14) :- !.
+sortable_part(1/sin(H)^N,H,13) :- !.
+sortable_part(1/log(base(B),H),H,12) :- !.
+sortable_part(1/tan(H),H,11) :- !.
+sortable_part(1/cos(H),H,10) :- !.
+sortable_part(1/sin(H),H,9) :- !.
+sortable_part(log(base(B),H),H,8) :- !.
+sortable_part(tan(H),H,7) :- !.
+sortable_part(cos(H),H,6) :- !.
+sortable_part(sin(H),H,5) :- !.
+
+sortable_part(H^N,H,4) :- !.
+sortable_part(1/(H^N),H,3) :- !.
+sortable_part(1/H,H,2) :- !.
+sortable_part(H,H,1) :- !.
+
+minor_equal_list(L1,L2,R) :-
+	atomic(L1),
+	atomic(L2),
+	name_new(L1,N1),
+	name_new(L2,N2),
+	minor_equal_list_1(N1,N2,R).
+
+minor_equal_list_1([],[],N).	
+minor_equal_list_1([],L2,N).	
+minor_equal_list_1([H|T1],[H|T2],N) :-
+	minor_equal_list_1(T1,T2,N).	
+minor_equal_list_1([H1|T1],[H2|T2],1) :-
+	H1 < H2.
+minor_equal_list_1([H1|T1],[H2|T2],0) :-
+	H1 > H2.
+
+in_list(F1/F2,L0,L) :-
+	in_list(F1*(1/F2),L0,L),
+	!.	
+in_list(F1*(1/(-F2)),L0,L) :-
+	in_list(F1,L0,L1),
+	append(L1,['-',1/F2],L),
+	!.
+in_list(F1*(1/F2),L0,L) :-
+	number(F2),
+	F2 < 0,
+	F3 is -F2,
+	in_list(F1,L0,L1),
+	append(L1,['-',1/F3],L),
+	!.
+in_list(F1*(1/F2),L0,L) :-
+	in_list(F1,L0,L1),
+	append(L1,[1/F2],L),
+	!.
+in_list(F1*(-F2),L0,L) :-
+	in_list(F1,L0,L1),
+	append(L1,['-',F2],L),
+	!.
+in_list(F1*F2,L0,L) :-
+	number(F2),
+	F2 < 0,
+	F3 is -F2,
+	in_list(F1,L0,L1),
+	append(L1,['-',F3],L),
+	!.
+in_list(F1*F2,L0,L) :-
+	in_list(F1,L0,L1),
+	append(L1,[F2],L),
+	!.
+in_list(F,L0,L) :-
+	number(F),
+	F > 0,
+	append(L0,['+',F],L),
+	!.
+in_list(F,L0,L) :-
+	number(F),
+	F < 0,
+	F1 is -F,
+	append(L0,['-',F1],L),
+	!.
+in_list(-F,L0,L) :-
+	append(L0,['-',F],L),
+	!.
+in_list(F,L0,L) :-
+	append(L0,['+',F],L),
+	!.
+
+ins_sort([],[]).
+ins_sort([H|T],L) :-
+	ins_sort(T,L1),
+	ins_ord(H,L1,L).
+
+ins_ord(X,[],[X]).
+ins_ord(1/X,[Y|Ys],[1/X,Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/(X^N),[Y|Ys],[1/(X^N),Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/X,[Y^N|Ys],[1/X,Y^N|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/(X^N),[Y^M|Ys],[1/(X^N),Y^M|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X,[1/Y|Ys],[X,1/Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X^N,[1/Y|Ys],[X^N,1/Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X,[1/(Y^N)|Ys],[X,1/(Y^N)|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X^N,[1/(Y^M)|Ys],[X^N,1/(Y^M)|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/X,[1/Y|Ys],[1/X,1/Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/(X^N),[1/Y|Ys],[1/(X^N),1/Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/X,[1/(Y^N)|Ys],[1/X,1/(Y^N)|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/(X^N),[1/(Y^M)|Ys],[1/(X^N),1/(Y^M)|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X,[Y|Ys],[X,Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X^N,[Y|Ys],[X^N,Y|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X,[Y^N|Ys],[X,Y^N|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(X^N,[Y^M|Ys],[X^N,Y^M|Ys]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(X,Zn).
+ins_ord(1/X,[Y|Ys],[Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/X,Ys,Zs).
+ins_ord(1/(X^N),[Y|Ys],[Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/X^N,Ys,Zs).
+ins_ord(1/X,[Y^N|Ys],[Y^N|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/X,Ys,Zs).
+ins_ord(1/(X^N),[Y^M|Ys],[Y^M|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/(X^N),Ys,Zs).
+ins_ord(X,[1/Y|Ys],[1/Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X,Ys,Zs).
+ins_ord(X^N,[1/Y|Ys],[1/Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X^N,Ys,Zs).
+ins_ord(X,[1/(Y^N)|Ys],[1/(Y^N)|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X,Ys,Zs).
+ins_ord(X^N,[1/(Y^M)|Ys],[1/(Y^M)|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X^N,Ys,Zs).
+ins_ord(1/X,[1/Y|Ys],[1/Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/X,Ys,Zs).
+ins_ord(1/(X^N),[1/Y|Ys],[1/Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/(X^N),Ys,Zs).
+ins_ord(1/X,[1/(Y^M)|Ys],[1/(Y^M)|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/X,Ys,Zs).
+ins_ord(1/(X^N),[1/(Y^M)|Ys],[1/(Y^M)|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(1/(X^N),Ys,Zs).
+ins_ord(X,[Y|Ys],[Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X,Ys,Zs).
+ins_ord(X^N,[Y|Ys],[Y|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X^N,Ys,Zs).
+ins_ord(X,[Y^N|Ys],[Y^N|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X,Ys,Zs).
+ins_ord(X^N,[Y^M|Ys],[Y^M|Zs]) :-
+	atomic(X),
+	atomic(Y),
+	name_new(X,Xn),
+	name_new(Y,Yn),
+	minor(Xn,Yn,Zn),
+	name_new(Y,Zn),
+	ins_ord(X^N,Ys,Zs).
+
+sign('+').
+sign('-').	
+	
+	
+compress([0|_],A,[0]) :-
+	!.
+compress(['+'|T],'+',LC) :-
+	compress(T,'+',LC),
+	!.
+compress(['+'|T],'-',LC) :-
+	compress(T,'-',LC),
+	!.
+compress(['-'|T],'+',LC) :-
+	compress(T,'-',LC),
+	!.
+compress(['-'|T],'-',LC) :-
+	compress(T,'+',LC),
+	!.
+compress([H^N|T],S,[S|TC]) :-
+	sign(S),
+	number(H),
+	%P is H^N,
+	simplify_term(N,N1),
+	pow_op(H,N1,P),
+	compress(T,P,TC),
+	!.
+compress([1/(H^N)|T],S,[S|TC]) :-
+	sign(S),
+	number(H),
+	%P is 1/H^N,
+	simplify_term(N,N1),
+	pow_op(H,N1,P0),
+	div_op(1,P0,P),
+	compress(T,P,TC),
+	!.
+compress([1/H|T],S,[S|TC]) :-
+	sign(S),
+	number(H),
+	real_form(H,Hr),
+	P is 1.0/Hr,
+	compress(T,P,TC),
+	!.
+compress([H|T],S,[S|TC]) :-
+	sign(S),
+	number(H),
+	compress(T,H,TC),
+	!.
+compress([H^N|T],A,LC) :-
+	number(A),
+	number(H),
+	simplify_term(N,N1),
+	number(N1),
+	%P0 is H^N,
+	pow_op(H,N,P0),
+	P is A * P0,
+	compress(T,P,LC),
+	!.
+compress([A^N|T],A,LC) :-
+	number(A),
+	simplify_term(N+1,N1),
+	pow_op(A,N1,P),
+	compress(T,P,LC),
+	!.
+compress([H^N|T],A,[A|TC]) :-
+	number(A),
+	number(H),
+	simplify_term(N,N1),
+	pow_op(H,N1,P),
+	compress(T,P,TC),
+	!.
+compress([1/(H^N)|T],A,LC) :-
+	number(A),
+	number(H),
+	%PW is H^N,
+	pow_op(H,N,PW),
+	real_form(PW,PWr),
+	P0 is 1.0/PWr,
+	P is A * P0,
+	compress(T,P,LC),
+	!.
+compress([1/(A^N)|T],A,LC) :-
+	number(A),
+	simplify_term(1-N,N1),
+	pow_op(A,N1,P),
+	compress(T,P,LC),
+	!.
+compress([1/(H^N)|T],A,[A|TC]) :-
+	number(A),
+	number(H),
+	simplify_term(N,N1),
+	pow_op(H,N1,P0),
+	div_op(1,P0,P),	
+	compress(T,P,TC),
+	!.
+compress([1/H|T],A,LC) :-
+	number(A),
+	number(H),
+	real_form(H,Hr),
+	P is A * 1.0/Hr,
+	compress(T,P,LC),
+	!.
+compress([H|T],A,LC) :-
+	number(A),
+	number(H),
+	P is A * H,
+	compress(T,P,LC),
+	!.
+compress([H|T],S,[S|TC]) :-
+	\+ number(H),
+	sign(S),
+	compress(T,H,TC),
+	!.
+compress([H|T],1,LC) :-
+	compress(T,H,LC),
+	!.
+compress([H|T],A,[A|TC]) :-
+	number(A),
+	\+ number(H),
+	compress(T,H,TC),
+	!.
+compress([H|T],H,LC) :-
+	mul_op_list(H,H,P),
+	compress(T,P,LC),
+	!.
+compress([H^N|T],H,LC) :-
+	mul_op_list(H^N,H,P),
+	compress(T,P,LC),
+	!.
+compress([H|T],H^N,LC) :-
+	mul_op_list(H,H^N,P),
+	compress(T,P,LC),
+	!.
+compress([H^N|T],H^M,LC) :-
+	mul_op_list(H^N,H^M,P),
+	compress(T,P,LC),
+	!.
+compress([1/H|T],H,LC) :-
+	compress(T,1,LC),
+	!.
+compress([1/H|T],H^N,LC) :-
+	mul_op_list(1/H,H^N,P),
+	compress(T,P,LC),
+	!.	
+compress([1/H|T],1/H,LC) :-
+	mul_op_list(1/H,1/H,P),
+	compress(T,P,LC),
+	!.
+compress([1/H|T],1/(H^N),LC) :-
+	mul_op_list(1/H,1/(H^N),P),
+	compress(T,P,LC),
+	!.	
+compress([1/(H^N)|T],H,LC) :-
+	mul_op_list(1/(H^N),H,P),
+	compress(T,P,LC),
+	!.
+compress([1/(H^N)|T],H^M,LC) :-
+	mul_op_list(1/(H^N),H^M,P),
+	compress(T,P,LC),
+	!.	
+compress([1/(H^N)|T],1/H,LC) :-
+	mul_op_list(1/(H^N),1/H,P),
+	compress(T,P,LC),
+	!.
+compress([1/(H^N)|T],1/(H^M),LC) :-
+	mul_op_list(1/(H^N),1/(H^M),P),
+	compress(T,P,LC),
+	!.		
+compress([H|T],1/H,LC) :-
+	compress(T,1,LC),
+	!.
+compress([H^N|T],1/H,LC) :-
+	mul_op_list(H^N,1/H,P),
+	compress(T,P,LC),
+	!.	
+compress([1/(H^N)|T],1/H,LC) :-
+	mul_op_list(1/(H^N),1/H,P),
+	compress(T,P,LC),
+	!.	
+compress([H|T],1/(H^N),LC) :-
+	mul_op_list(H,1/(H^N),P),
+	compress(T,P,LC),
+	!.
+compress([H^N|T],1/(H^M),LC) :-
+	mul_op_list(H^N,1/(H^M),P),
+	compress(T,P,LC),
+	!.	
+compress([1/H|T],1/(H^N),LC) :-
+	mul_op_list(1/H,1/(H^N),P),
+	compress(T,P,LC),
+	!.		
+compress([],1,[1]) :- !.
+compress([],P,[P]) :- !.	
+compress([H],A,[A,H]) :- !.
+compress([H|T],A,[A|TC]) :-
+	compress(T,H,TC),
+	!.
+
+compress_composed_factors(L,LC) :-
+	group_similar(L,[],LC).
+	
+
+minor([],[],[]).
+minor([],L2,[]).
+minor(L1,[],[]).	
+minor([H|T1],[H|T2],[H|T]) :-
+	minor(T1,T2,T).
+minor([H1|T1],[H2|T2],[H1|T1]) :-
+	H1 < H2.
+minor([H1|T1],[H2|T2],[H2|T2]) :-
+	H1 > H2.
+
+create_term_product([0.0],0) :- !.
+create_term_product([0],0) :- !.
+create_term_product([H,1.0,'+'],H) :- !.
+create_term_product([H,1,'+'],H) :- !.
+create_term_product([H,1.0,'-'],-H) :- !.
+create_term_product([H,1,'-'],-H) :- !.
+create_term_product([H,'+'],H) :- !.
+create_term_product([H,'-'],H1) :-
+	number(H),
+	H1 is -H,
+	!.
+create_term_product([H,'-'],-H) :- !.
+create_term_product([H|T],R*H) :-
+	create_term_product(T,R),
+	!.
+
+mul_op_list(F1,F2,P) :-
+	in_list(F1,L01,L1),
+	in_list(F2,L02,L2),
+	mul_op_list_1(L1,L2,LP),
+	compress(LP,'+',LPC),
+	reverse(LPC,LPR),
+	create_term_product(LPR,P).
+	
+mul_op_list_1(['+'|T1],['+'|T2],['+'|TP]) :-
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1(['+'|T1],['-'|T2],['-'|TP]) :-
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1(['-'|T1],['+'|T2],['-'|TP]) :-
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1(['-'|T1],['-'|T2],['+'|TP]) :-
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1([0|T1],[H2|T2],[0]) :- !.	
+mul_op_list_1([H1|T1],[0|T2],[0]) :- !.
+mul_op_list_1([0|T1],[0|T2],[0]) :- !.	
+mul_op_list_1([H1|T1],[H2|T2],[HP|TP]) :-		%e.g. 4*3
+	number(H1),
+	number(H2),
+	HP is H1 * H2,
+	mul_op_list_1(T1,T2,TP),
+	!.	
+
+mul_op_list_1([1/H1|T1],[H2|T2],[HP|TP]) :-		%e.g. 1/4*3
+	number(H1),
+	number(H2),
+	real_form(H1,H1r),
+	real_form(H2,H2r),
+	HP is H2r / H1r,
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1([H1|T1],[1/H2|T2],[HP|TP]) :-		% e.g. 4*1/3
+	number(H1),
+	number(H2),
+	real_form(H1,H1r),
+	real_form(H2,H2r),
+	HP is H1r / H2r,
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1([1/H1|T1],[1/H2|T2],[1/HP|TP]) :-	% 1/4*1/3
+	number(H1),
+	number(H2),
+	HP is H1 * H2,
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1([H1|T1],[H2|T2],[H1|TP]) :-		% e.g. 4*a or 4*(a+b)
+	number(H1),
+	\+ number(H2),
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+mul_op_list_1([1/H1|T1],[H2|T2],[1/H1|TP]) :-	% e.g. 1/4*a or 1/4*(a+b)
+	number(H1),
+	\+ number(H2),
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+mul_op_list_1([H1|T1],[H2|T2],[H2|TP]) :-		% e.g. a*3 or (a+b)*3
+	\+ number(H1),
+	number(H2),
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+mul_op_list_1([H1|T1],[1/H2|T2],[1/H2|TP]) :-	%e.g. a*1/3 or (a+b)*1/3
+	\+ number(H1),
+	number(H2),
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+	
+mul_op_list_1([H^N|T1],[H|T2],LP) :-				%e.g. a^N*a or (a+b)^N*(a+b)
+	sum_op(N,1,N1),
+	simplify_term(N1,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H^N|T1],[H|T2],[HP|TP]) :-
+	sum_op(N,1,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([1/H|T1],[H|T2],LP) :-				%e.g. 1/a*a or 1/(a+b)*(a+b)
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([1/(H^2)|T1],[H|T2],[1/H|TP]) :-		%e.g. 1/a^2*a or 1/(a+b)^2*(a+b)
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([1/(H^N)|T1],[H|T2],LP) :-				%e.g. 1/a^N*a or 1/(a+b)^N*(a+b)
+	sub_op(1,N,N1),
+	simplify_term(N1,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([1/(H^N)|T1],[H|T2],[HP|TP]) :-
+	sub_op(1,N,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([H|T1],[H^N|T2],LP) :-				%e.g. a*a^N or (a+b)*(a+b)^N
+	sum_op(N,1,N1),
+	simplify_term(N1,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H|T1],[H^N|T2],[HP|TP]) :-
+	sum_op(N,1,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([H|T1],[1/H|T2],LP) :-				%e.g. a*1/a or (a+b)*1/(a+b)
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H|T1],[1/(H^2)|T2],[1/H|TP]) :-		%e.g. a*1/a^2 or (a+b)*1/(a+b)^2
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([H|T1],[1/(H^N)|T2],LP) :-				%e.g. a*1/a^N or (a+b)*1/(a+b)^N
+	sub_op(1,N,N1),
+	simplify_term(N1,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H|T1],[1/(H^N)|T2],[HP|TP]) :-
+	sub_op(1,N,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([H^N|T1],[H^M|T2],LP) :-				%e.g. a^N*a^M or (a+b)^N*(a+b)^M
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H^N|T1],[H^M|T2],[HP|TP]) :-
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([1/H|T1],[1/H|T2],[1/(H^2)|TP]) :-		%e.g. 1/a*1/a oppure 1/(a+b)*1/(a+b)
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([1/H|T1],[1/(H^N)|T2],LP) :-			%e.g. 1/a*1/a^N oppure 1/(a+b)*1/(a+b)^N
+	sum_op(1,N,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([1/H|T1],[1/(H^N)|T2],[HP|TP]) :-
+	sum_op(1,N,S0),
+	simplify_term(S0,S),
+	term_result(1/H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([1/(H^N)|T1],[1/H|T2],LP) :-			%e.g. 1/a^N*1/a oppure 1/(a+b)^N*1/(a+b)
+	sum_op(N,1,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.	
+mul_op_list_1([1/(H^N)|T1],[1/H|T2],[HP|TP]) :-
+	sum_op(N,1,S0),
+	simplify_term(S0,S),
+	term_result(1/H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([1/(H^N)|T1],[1/(H^M)|T2],LP) :-		%e.g. 1/a^N*1/a^M oppure 1/(a+b)^N*1/(a+b)^M
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1([1/(H^N)|T1],[1/(H^M)|T2],[HP|TP]) :-
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	term_result(1/H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([H^N|T1],[1/(H^M)|T2],LP) :-				%e.g. a^N*1/a^M oppure (a+b)^N*1/(a+b)^M
+	sub_op(N,M,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H^N|T1],[1/(H^M)|T2],[HP|TP]) :-
+	sub_op(N,M,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([1/(H^N)|T1],[H^M|T2],LP) :-				%e.g. 1/a^N*a^M oppure 1/(a+b)^N*(a+b)^M
+	sub_op(M,N,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([1/(H^N)|T1],[H^M|T2],[HP|TP]) :-
+	sub_op(M,N,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([1/H|T1],[H^2|T2],[H|TP]) :-				%e.g. 1/a*a^2 oppure 1/(a+b)*(a+b)^2
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([1/H|T1],[H^N|T2],LP) :-					%e.g. 1/a*a^N oppure 1/(a+b)*(a+b)^N
+	sub_op(N,1,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([1/H|T1],[H^N|T2],[HP|TP]) :-
+	sub_op(N,1,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+
+mul_op_list_1([H^2|T1],[1/H|T2],[H|TP]) :-				%e.g. a^2*1/a oppure (a+b)^2*1/(a+b)
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([H^N|T1],[1/H|T2],LP) :-					%e.g. a^N*1/a oppure (a+b)^N*1/(a+b)
+	sub_op(N,1,S0),
+	simplify_term(S0,S),
+	S = 0,
+	mul_op_list_1(T1,T2,LP),
+	!.
+mul_op_list_1([H^N|T1],[1/H|T2],[HP|TP]) :-
+	sub_op(N,1,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	mul_op_list_1(T1,T2,TP),
+	!.
+	
+mul_op_list_1([H|T1],[H|T2],[H^2|TP]) :-				%e.g. a*a oppure (a+b)*(a+b)
+	mul_op_list_1(T1,T2,TP),
+	!.
+mul_op_list_1([H1|T1],[H2|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+mul_op_list_1([H1|T1],[H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+	
+mul_op_list_1([H1^E1|T1],[H2|T2],LP) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,0),
+	mul_op_list_1(T1,[H2|T2],LP),
+	!.
+mul_op_list_1([H1^E1|T1],[H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,S),
+	term_result(H1,S,HP),
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+
+mul_op_list_1([H1^E1|T1],[H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	mul_op_list_1([H1^E|T1],T2,TP),
+	!.
+mul_op_list_1([H1|T1],[H2^E2|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	mul_op_list_1(T1,[H2^E|T2],TP),
+	!.
+
+mul_op_list_1([H1|T1],[H2^E2|T2],LP) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,0),
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+mul_op_list_1([H1|T1],[H2^E2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,S),
+	term_result(H2,S,HP),
+	mul_op_list_1([H1|T1],T2,TP),
+	!.	
+
+mul_op_list_1([H1^E1|T1],[H2^E2|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	mul_op_list_1(T1,[HP2|T2],TP),
+	!.
+mul_op_list_1([H1^E1|T1],[H2^E2|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	mul_op_list_1([HP1|T1],T2,TP),
+	!.
+mul_op_list_1([1/H1|T1],[H2|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+mul_op_list_1([1/H1|T1],[H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	mul_op_list_1([1/H1|T1],T2,TP),
+	!.
+mul_op_list_1([H1|T1],[1/H2|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	mul_op_list_1(T1,[1/H2|T2],TP),
+	!.
+mul_op_list_1([H1|T1],[1/H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+mul_op_list_1([1/H1|T1],[1/H2|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	mul_op_list_1(T1,[1/H2|T2],TP),
+	!.
+mul_op_list_1([1/H1|T1],[1/H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	mul_op_list_1([1/H1|T1],T2,TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	mul_op_list_1([HP|T1],T2,TP),
+	!.
+mul_op_list_1([H1^E1|T1],[1/H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E),
+	term_result(H1,E,HP),
+	mul_op_list_1(T1,[1/H2|T2],TP),
+	!.
+mul_op_list_1([H1^E1|T1],[1/H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	term_result(H1,E,HP),
+	mul_op_list_1([HP|T1],T2,TP),
+	!.
+mul_op_list_1([1/H1|T1],[H2^E2|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	term_result(H2,E,HP),
+	mul_op_list_1(T1,[HP|T2],TP),
+	!.
+mul_op_list_1([1/H1|T1],[H2^E2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,E),
+	term_result(H2,E,HP),
+	mul_op_list_1([1/H1|T1],T2,TP),
+	!.
+mul_op_list_1([H1|T1],[1/(H2^E2)|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	mul_op_list_1(T1,[HP|T2],TP),
+	!.
+mul_op_list_1([H1|T1],[1/(H2^E2)|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[H2^E2|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	mul_op_list_1(T1,[HP2|T2],TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[H2^E2|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	mul_op_list_1([HP1|T1],T2,TP),
+	!.
+mul_op_list_1([H1^E1|T1],[1/(H2^E2)|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	mul_op_list_1(T1,[HP2|T2],TP),
+	!.
+mul_op_list_1([H1^E1|T1],[1/(H2^E2)|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	mul_op_list_1([HP1|T1],T2,TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[1/H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	mul_op_list_1(T1,[1/H2|T2],TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[1/H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	mul_op_list_1([HP|T1],T2,TP),
+	!.
+mul_op_list_1([1/H1|T1],[1/(H2^E2)|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	mul_op_list_1(T1,[HP|T2],TP),
+	!.
+mul_op_list_1([1/H1|T1],[1/(H2^E2)|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	mul_op_list_1([1/H1|T1],T2,TP),
+	!.
+mul_op_list_1([1/H1^E1|T1],[1/(H2^E2)|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	mul_op_list_1(T1,[HP2|T2],TP),
+	!.
+mul_op_list_1([1/(H1^E1)|T1],[1/(H2^E2)|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	mul_op_list_1([HP1|T1],T2,TP),
+	!.
+mul_op_list_1([H1|T1],[H2|T2],[H1|TP]) :-
+	simple_factor(H1),
+	\+ simple_factor(H2),
+	mul_op_list_1(T1,[H2|T2],TP),
+	!.
+mul_op_list_1([H1|T1],[H2|T2],[H2|TP]) :-
+	\+ simple_factor(H1),
+	simple_factor(H2),
+	mul_op_list_1([H1|T1],T2,TP),
+	!.
+mul_op_list_1(L1,[],L1) :- !.
+mul_op_list_1([],L2,L2) :- !.
+mul_op_list_1([],[],[]) :- !.
+mul_op_list_1(L1,L2,L3) :-
+	append(L1,L2,LA),
+	group_similar(LA,[],L3),
+	!.
+
+
+div_op_list(F1,F2,P) :-
+	is_product(F1),
+	is_product(F2),
+	div_op_list_0(F1,F2,P),
+	!.
+div_op_list(F1,F2,P) :-
+	div_op(F1,F2,P).
+
+div_op_list_0(F1,F2,P) :-
+	in_list(F1,L01,L1),
+	in_list(F2,L02,L2),
+	div_op_list_1(L1,L2,LP),
+	compress(LP,'+',LPC),
+	reverse(LPC,LPR),
+	create_term_product(LPR,P).
+	
+div_op_list_1(['+'|T1],['+'|T2],['+'|TP]) :-
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1(['+'|T1],['-'|T2],['-'|TP]) :-
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1(['-'|T1],['+'|T2],['-'|TP]) :-
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1(['-'|T1],['-'|T2],['+'|TP]) :-
+	div_op_list_1(T1,T2,TP),
+	!.
+
+div_op_list_1([0|T1],[H2|T2],[0]) :- !.
+
+
+div_op_list_1([H1|T1],[H2|T2],[HP|TP]) :-		%e.g. 4/3
+	number(H1),
+	number(H2),
+	real_form(H1,H1r),
+	real_form(H2,H2r),
+	HP is H1r / H2r,
+	div_op_list_1(T1,T2,TP),
+	!.	
+div_op_list_1([1/H1|T1],[H2|T2],[HP|TP]) :-		%e.g. (1/4)/3
+	number(H1),
+	number(H2),
+	P is H1 * H2,
+	real_form(P,Pr),
+	HP is 1.0 / Pr,
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H1|T1],[1/H2|T2],[HP|TP]) :-		%e.g. 4/(1/3)
+	number(H1),
+	number(H2),
+	HP is H1 * H2,
+	div_op_list_1(T1,T2,TP),
+	!.	
+div_op_list_1([1/H1|T1],[1/H2|T2],[1/HP|TP]) :-	%e.g. (1/4)/(1/3)
+	number(H1),
+	number(H2),
+	real_form(H1,H1r),
+	real_form(H2,H2r),
+	HP is H2r / H1r,
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H1|T1],[H2|T2],[H1|TP]) :-
+	number(H1),
+	\+ number(H2),
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([1/H1|T1],[H2|T2],[1/H1|TP]) :-
+	number(H1),
+	\+ number(H2),
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([H1|T1],[H2|T2],[1/H2|TP]) :-
+	\+ number(H1),
+	number(H2),
+	div_op_list_1([H1|T1],T2,TP),
+	!.	
+div_op_list_1([H1|T1],[1/H2|T2],[H2|TP]) :-
+	\+ number(H1),
+	number(H2),
+	div_op_list_1([H1|T1],T2,TP),
+	!.
+div_op_list_1([H^N|T1],[H|T2],LP) :-				%e.g. a^N/a oppure (a+b)^N/(a+b)
+	sub_op(N,1,N1),
+	simplify_term(N1,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([H^N|T1],[H|T2],[HP|TP]) :-
+	sub_op(N,1,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/H|T1],[H|T2],[1/(H^2)|TP]) :-		%e.g. (1/a)/a oppure (1/(a+b))/(a+b)
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/(H^N)|T1],[H|T2],LP) :-				%e.g. (1/a^N)/a oppure (1/(a+b)^N)/(a+b)
+	sum_op(N,1,N1),
+	simplify_term(N1,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([1/(H^N)|T1],[H|T2],[HP|TP]) :-
+	sum_op(N,1,N1),
+	simplify_term(N1,S),
+	term_result(1/H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H|T1],[H^N|T2],LP) :-				%e.g. a/a^N oppure (a+b)/(a+b)^N
+	sub_op(1,N,N1),
+	simplify_term(N1,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([H|T1],[H^N|T2],[HP|TP]) :-
+	sub_op(1,N,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H|T1],[1/H|T2],[H^2|TP]) :-			%e.g. a/(1/a) oppure (a+b)/(1/(a+b))
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H|T1],[1/(H^N)|T2],LP) :-				%e.g. a/(1/a^N) oppure (a+b)/(1/(a+b)^N)
+	sum_op(1,N,N1),
+	simplify_term(N1,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([H|T1],[1/(H^N)|T2],[HP|TP]) :-
+	sum_op(1,N,N1),
+	simplify_term(N1,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H^N|T1],[H^M|T2],LP) :-				%e.g. a^N/a^M oppure (a+b)^N/(a+b)^M
+	sub_op(N,M,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([H^N|T1],[H^M|T2],[HP|TP]) :-
+	sub_op(N,M,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/H|T1],[1/H|T2],LP) :-				%e.g. (1/a)/(1/a) oppure (1/(a+b))/(1/(a+b))
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([1/H|T1],[1/(H^N)|T2],LP) :-			%e.g. (1/a)/(1/a^N) oppure (1/(a+b))/(1/(a+b)^N)
+	sub_op(N,1,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([1/H|T1],[1/(H^N)|T2],[HP|TP]) :-
+	sub_op(N,1,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/(H^N)|T1],[1/H|T2],LP) :-			%e.g. (1/a^N)/(1/a) oppure (1/(a+b)^N)/(1/(a+b))
+	sub_op(1,N,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.	
+div_op_list_1([1/(H^N)|T1],[1/H|T2],[HP|TP]) :-
+	sub_op(1,N,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/(H^N)|T1],[1/(H^M)|T2],LP) :-			%e.g. (1/a^N)/(1/a^M) oppure (1/(a+b)^N)/(1/(a+b)^M)
+	sub_op(M,N,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/(H^N)|T1],[1/(H^M)|T2],[HP|TP]) :-
+	sub_op(M,N,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H^N|T1],[1/(H^M)|T2],LP) :-				%e.g. a^N/(1/a^M) oppure (a+b)^N/(1/(a+b)^M)
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([H^N|T1],[1/(H^M)|T2],[HP|TP]) :-
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([1/(H^N)|T1],[H^M|T2],LP) :-				%e.g. (1/a^N)/a^M oppure (1/(a+b)^N)/(a+b)^M
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([1/(H^N)|T1],[H^M|T2],[HP|TP]) :-
+	sum_op(N,M,S0),
+	simplify_term(S0,S),
+	term_result(1/H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.	
+div_op_list_1([1/H|T1],[H^N|T2],LP) :-					%e.g. (1/a)/a^N oppure (1/(a+b))/(a+b)^N
+	sum_op(1,N,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([1/H|T1],[H^N|T2],[HP|TP]) :-
+	sum_op(1,N,S0),
+	simplify_term(S0,S),
+	term_result(1/H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H^N|T1],[1/H|T2],LP) :-					%e.g. a^N/(1/a) oppure (a+b)^N/(1/(a+b))
+	sum_op(N,1,S0),
+	simplify_term(S0,S),
+	S = 0,
+	div_op_list_1(T1,T2,LP),
+	!.
+div_op_list_1([H^N|T1],[1/H|T2],[HP|TP]) :-
+	sum_op(N,1,S0),
+	simplify_term(S0,S),
+	term_result(H,S,HP),
+	div_op_list_1(T1,T2,TP),
+	!.
+div_op_list_1([H|T1],[H|T2],LP) :-						%e.g. a/a oppure (a+b)/(a+b)
+	div_op_list_1(T1,T2,LP),
+	!.
+
+div_op_list_1([H1|T1],[H2|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([H1|T1],[H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	div_op_list_1([H1|T1],T2,TP),
+	!.
+div_op_list_1([H1^E1|T1],[H2|T2],LP) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,0),
+	div_op_list_1(T1,[H2|T2],LP),
+	!.
+div_op_list_1([H1^E1|T1],[H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,S),
+	term_result(H1,S,HP),
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([H1^E1|T1],[H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	div_op_list_1([H1^E|T1],T2,TP),
+	!.
+div_op_list_1([H1|T1],[H2^E2|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	div_op_list_1(T1,[H2^E|T2],TP),
+	!.
+div_op_list_1([H1|T1],[H2^E2|T2],LP) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,0),
+	div_op_list_1([H1|T1],T2,TP),
+	!.
+div_op_list_1([H1|T1],[H2^E2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,S),
+	term_result(1/H2,S,HP),
+	div_op_list_1([H1|T1],T2,TP),
+	!.	
+div_op_list_1([H1^E1|T1],[H2^E2|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	div_op_list_1(T1,[HP2|T2],TP),
+	!.
+div_op_list_1([H1^E1|T1],[H2^E2|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	div_op_list_1([HP1|T1],T2,TP),
+	!.
+div_op_list_1([1/H1|T1],[H2|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([1/H1|T1],[H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	div_op_list_1([1/H1|T1],T2,TP),
+	!.
+div_op_list_1([H1|T1],[1/H2|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	div_op_list_1(T1,[1/H2|T2],TP),
+	!.
+div_op_list_1([H1|T1],[1/H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	div_op_list_1([H1|T1],T2,TP),
+	!.
+div_op_list_1([1/H1|T1],[1/H2|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	div_op_list_1(T1,[1/H2|T2],TP),
+	!.
+div_op_list_1([1/H1|T1],[1/H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	div_op_list_1([1/H1|T1],T2,TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[H2|T2],[1/H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	div_op_list_1([HP|T1],T2,TP),
+	!.
+div_op_list_1([H1^E1|T1],[1/H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E),
+	term_result(H1,E,HP),
+	div_op_list_1(T1,[1/H2|T2],TP),
+	!.
+div_op_list_1([H1^E1|T1],[1/H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	term_result(H1,E,HP),
+	div_op_list_1([HP|T1],T2,TP),
+	!.
+div_op_list_1([1/H1|T1],[H2^E2|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	term_result(H2,E,HP),
+	div_op_list_1(T1,[HP|T2],TP),
+	!.
+div_op_list_1([1/H1|T1],[H2^E2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,E),
+	term_result(H2,E,HP),
+	div_op_list_1([1/H1|T1],T2,TP),
+	!.
+div_op_list_1([H1|T1],[1/(H2^E2)|T2],[H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	div_op_list_1(T1,[HP|T2],TP),
+	!.
+div_op_list_1([H1|T1],[1/(H2^E2)|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	div_op_list_1([H1|T1],T2,TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[H2^E2|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	div_op_list_1(T1,[HP2|T2],TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[H2^E2|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	div_op_list_1([HP1|T1],T2,TP),
+	!.
+div_op_list_1([H1^E1|T1],[1/(H2^E2)|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	div_op_list_1(T1,[HP2|T2],TP),
+	!.
+div_op_list_1([H1^E1|T1],[1/(H2^E2)|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	div_op_list_1([HP1|T1],T2,TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[1/H2|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	div_op_list_1(T1,[1/H2|T2],TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[1/H2|T2],[H2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E),
+	term_result(1/H1,E,HP),
+	div_op_list_1([HP|T1],T2,TP),
+	!.
+div_op_list_1([1/H1|T1],[1/(H2^E2)|T2],[1/H1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	div_op_list_1(T1,[HP|T2],TP),
+	!.
+div_op_list_1([1/H1|T1],[1/(H2^E2)|T2],[HP|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E2,E),
+	term_result(1/H2,E,HP),
+	div_op_list_1([1/H1|T1],T2,TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[1/(H2^E2)|T2],[HP1|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H1,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(1/H2,E2R,HP2),
+	div_op_list_1(T1,[HP2|T2],TP),
+	!.
+div_op_list_1([1/(H1^E1)|T1],[1/(H2^E2)|T2],[HP2|TP]) :-
+	atom(H1),
+	atom(H2),
+	name_new(H1,N1),
+	name_new(H2,N2),
+	minor(N1,N2,N),
+	name_new(H,N),
+	H = H2,
+	simplify_term(E1,E1R),
+	term_result(1/H1,E1R,HP1),
+	simplify_term(E2,E2R),
+	term_result(H2,E2R,HP2),
+	div_op_list_1([HP1|T1],T2,TP),
+	!.
+div_op_list_1([H1|T1],[H2|T2],[H1|TP]) :-
+	simple_factor(H1),
+	\+ simple_factor(H2),
+	div_op_list_1(T1,[H2|T2],TP),
+	!.
+div_op_list_1([H1|T1],[H2|T2],[1/H2|TP]) :-
+	\+ simple_factor(H1),
+	simple_factor(H2),
+	div_op_list_1([H1|T1],T2,TP),
+	!.
+div_op_list_1(L1,[],L1) :- !.
+div_op_list_1([],[H|T],[H1|T1]) :-
+	reciprocal_term(H,H1),
+	div_op_list_1([],T,T1),
+	!.
+div_op_list_1([],[],[]) :- !.
+div_op_list_1(L1,L2,L3) :-
+	div_op_list_1([],L2,L2R),
+	append(L1,L2R,L3),
+	%group_similar(LA,[],L3),
+	!.
+	
+	
+term_result(1/H,1,1/H) :- !.
+term_result(1/H,-1,H) :- !.
+term_result(1/H,E,H^E1) :-
+	number(E),
+	E < 0,
+	E1 is -E,
+	!.
+term_result(1/H,E,1/(H^E)) :- !.
+term_result(H,1,H) :- !.
+term_result(H,-1,1/H) :- !.
+term_result(H,E,1/(H^E1)) :-
+	number(E),
+	E < 0,
+	E1 is -E,
+	!.
+term_result(H,E,H^E) :- !.
+
+sqrt_op_list(0,0) :-
+	!.
+sqrt_op_list(1,1) :-
+	!.
+sqrt_op_list(R^N,R1) :-
+	number(R),
+	number(N),
+	%R1 is R^(1.0/2.0),
+	pow_op(R,0.5,R1),
+	!.
+sqrt_op_list(R^N,R) :-
+	number(N),
+	mul_op_list(N,1/2,1),
+	!.
+sqrt_op_list(R^N,R) :-
+	number(N),
+	mul_op_list(N,1/2,1.0),
+	!.
+sqrt_op_list(R^N,R1) :-
+	number(N),
+	mul_op_list(N,1/2,-1),
+	reciprocal_term(R,R1),
+	!.
+sqrt_op_list(R^N,R1) :-
+	number(N),
+	mul_op_list(N,1/2,-1.0),
+	reciprocal_term(R,R1),
+	!.
+sqrt_op_list(R^N,R^N1) :-
+	number(N),
+	mul_op_list(N,1/2,N1),
+	N1 > 0,
+	!.
+sqrt_op_list(R^N,R1^N1) :-
+	number(N),
+	mul_op_list(N,1/2,N0),
+	N0 < 0,
+	N1 is -N0,
+	reciprocal_term(R,R1),
+	!.
+sqrt_op_list(R^N,R^N1) :-
+	\+ number(N),
+	mul_op_list(N,1/2,N1),
+	first_factor(N1,F,ABS),
+	number(F),
+	F > 0,
+	!.
+sqrt_op_list(R^N,R^N1) :-
+	\+ number(N),
+	mul_op_list(N,1/2,N1),
+	first_factor(N1,F,ABS),
+	!.
+sqrt_op_list(R^N,R1^ABS) :-
+	number(N),
+	mul_op_list(N,1/2,N1),
+	first_factor(N1,F,ABS),
+	number(F),
+	F < 0,
+	reciprocal_term(R,R1),
+	!.
+sqrt_op_list(R^N,R1^ABS) :-
+	number(N),
+	mul_op_list(N,1/2,N1),
+	first_factor(N1,-F,ABS),
+	reciprocal_term(R,R1),
+	!.
+sqrt_op_list(R,R^(1/2)) :-
+	!.
+
+reciprocal_term(1/T,T) :- !.
+reciprocal_term(T1/T2,T2/T1) :- !.
+reciprocal_term(T,1/T) :- !.	
+
+
+pow_op_list(T,0,1) :- !.
+pow_op_list(T,1,T) :- !.
+pow_op_list(T,E,T1) :-
+	is_product(T),
+	rewrite_subterms(T,TR),
+	in_list(TR,L0,L),
+	pow_op_list_1(L,E,L1),
+	reverse(L1,L1R),
+	create_term_product(L1R,T1),	
+	!.
+pow_op_list(T,E,T1) :-
+	\+ is_product(T),
+	pow_op(T,E,T1),
+	!.
+	
+pow_op_list_1([],_,[]).
+pow_op_list_1(['+'|T],E,['+'|T1]) :-
+	pow_op_list_1(T,E,T1).
+pow_op_list_1(['-'|T],E,['+'|T1]) :-
+	number(E),
+	0 is E mod 2,
+	pow_op_list_1(T,E,T1).
+pow_op_list_1(['-'|T],E,['-'|T1]) :-
+	pow_op_list_1(T,E,T1).
+pow_op_list_1([H|T],E,[H1|T1]) :-
+	pow_op(H,E,H1),
+	pow_op_list_1(T,E,T1).
+
+
+
+sum_op_list(S1,S2,D) :-
+	in_list(S1,L01,L1),
+	in_list(S2,L02,L2),
+	coeff_1_explicit(L1,L2,L1E,L2E),
+	\+ similar(L1E,L2E),
+	sum_op(S1,S2,D).
+sum_op_list(S1,S2,D) :-
+	in_list(S1,L01,L1),
+	in_list(S2,L02,L2),
+	coeff_1_explicit(L1,L2,L1E,L2E),
+	similar(L1E,L2E),
+	sum_op_list_1(L1E,L2E,LD),
+	reverse(LD,LDR),
+	create_term_product(LDR,D).	
+
+sum_op_list_1(['+',N1|T],['+',N2|T],['+',D|T]) :-
+	D is N1 + N2,
+	!.
+sum_op_list_1(['+',N1|T],['-',N2|T],[0]) :-
+	D is N1 + (-N2),
+	zero_term(D),
+	!.
+sum_op_list_1(['+',N1|T],['-',N2|T],[S|T]) :-
+	D is N1 + (-N2),
+	unit_term(D,S),
+	!.
+sum_op_list_1(['+',N1|T],['-',N2|T],['-',D1|T]) :-
+	D is N1 + (-N2),
+	D < 0,
+	D1 is -D,
+	!.
+sum_op_list_1(['+',N1|T],['-',N2|T],['+',D|T]) :-
+	D is N1 + (-N2),
+	D > 0,
+	!.
+sum_op_list_1(['-',N1|T],['+',N2|T],[0]) :-
+	D is -N1 + N2,
+	zero_term(D),
+	!.
+sum_op_list_1(['-',N1|T],['+',N2|T],[S|T]) :-
+	D is -N1 + N2,
+	unit_term(D,S),
+	!.
+sum_op_list_1(['-',N1|T],['+',N2|T],['-',D1|T]) :-
+	D is -N1 + N2,
+	D < 0,
+	D1 is -D,
+	!.
+sum_op_list_1(['-',N1|T],['+',N2|T],['+',D|T]) :-
+	D is -N1 + N2,
+	D > 0,
+	!.
+sum_op_list_1(['-',N1|T],['-',N2|T],[0]) :-
+	D is -N1 + (-N2),
+	zero_term(D),
+	!.
+sum_op_list_1(['-',N1|T],['-',N2|T],[S|T]) :-
+	D is -N1 + (-N2),
+	unit_term(D,S),
+	!.
+sum_op_list_1(['-',N1|T],['-',N2|T],['-',D1|T]) :-
+	D is -N1 + (-N2),
+	D < 0,
+	D1 is -D,
+	!.
+sum_op_list_1(['-',N1|T],['-',N2|T],['+',D|T]) :-
+	D is -N1 + (-N2),
+	D > 0,
+	!.		
+	
+sub_op_list(S1,S2,D) :-
+	in_list(S1,L01,L1),
+	in_list(S2,L02,L2),
+	coeff_1_explicit(L1,L2,L1E,L2E),
+	\+ similar(L1E,L2E),
+	sub_op(S1,S2,D).
+sub_op_list(S1,S2,D) :-
+	in_list(S1,L01,L1),
+	in_list(S2,L02,L2),
+	coeff_1_explicit(L1,L2,L1E,L2E),
+	similar(L1E,L2E),
+	sub_op_list_1(L1E,L2E,LD),
+	reverse(LD,LDR),
+	create_term_product(LDR,D).
+
+sub_op_list_1(['+',N1|T],['+',N2|T],[0]) :-
+	D is N1 - N2,
+	zero_term(D),
+	!.
+sub_op_list_1(['+',N1|T],['+',N2|T],[S|T]) :-
+	D is N1 - N2,
+	unit_term(D,S),
+	!.
+sub_op_list_1(['+',N1|T],['+',N2|T],['-',D1|T]) :-
+	D is N1 - N2,
+	D < 0,
+	D1 is -D,
+	!.
+sub_op_list_1(['+',N1|T],['+',N2|T],['+',D|T]) :-
+	D is N1 - N2,
+	D > 0,
+	!.
+sub_op_list_1(['+',N1|T],['-',N2|T],['+',D|T]) :-
+	D is N1 - (-N2),
+	!.
+sub_op_list_1(['-',N1|T],['+',N2|T],['-',D1|T]) :-
+	D is -N1 - N2,
+	D1 is -D,
+	!.
+sub_op_list_1(['-',N1|T],['-',N2|T],[0]) :-
+	D is -N1 - (-N2),
+	zero_term(D),
+	!.
+sub_op_list_1(['-',N1|T],['-',N2|T],[S|T]) :-
+	D is -N1 - (-N2),
+	unit_term(D,S),
+	!.
+sub_op_list_1(['-',N1|T],['-',N2|T],['-',D1|T]) :-
+	D is -N1 - (-N2),
+	D < 0,
+	D1 is -D,
+	!.
+sub_op_list_1(['-',N1|T],['-',N2|T],['+',D|T]) :-
+	D is -N1 - (-N2),
+	D > 0,
+	!.	
+
+zero_term(0).
+zero_term(0.0).
+
+unit_term(1,'+').
+unit_term(1.0,'+').
+unit_term(-1,'-').
+unit_term(-1.0,'-').	
+
+	
+coeff_1_explicit([S1,N1|T1],[S2,N2|T2],[S1,N1|T1],[S2,N2|T2]) :-	
+	number(N1),
+	number(N2),
+	!.
+coeff_1_explicit([S1,N1|T1],[S2,N2|T2],[S1,1,N1|T1],[S2,1,N2|T2]) :-	
+	\+ number(N1),
+	\+ number(N2),
+	!.
+coeff_1_explicit([S1,N1|T1],[S2,N2|T2],[S1,N1|T1],[S2,1,N2|T2]) :-	
+	number(N1),
+	\+ number(N2),
+	!.
+coeff_1_explicit([S1,N1|T1],[S2,N2|T2],[S1,1,N1|T1],[S2,N2|T2]) :-	
+	\+ number(N1),
+	number(N2),
+	!.
+	
+similar([S1,N1|T],[S2,N2|T]) :- !.
+similar([S1,N1|T1],[S2,N2|T2]) :-
+	separate(T1,SFL,CFL1),
+	separate(T2,SFL,CFL2),
+	permutation(CFL2,CFL1),
+	!.
+	
+group_similar([],_,[]).
+group_similar([1/(H^N)|T1],La,L2) :-
+	member(H,La),
+	group_similar(T1,La,L2),
+	!.
+group_similar([1/H|T1],La,L2) :-
+	member(H,La),
+	group_similar(T1,La,L2),
+	!.
+group_similar([H^N|T1],La,L2) :-
+	member(H,La),
+	group_similar(T1,La,L2),
+	!.
+group_similar([H|T1],La,L2) :-
+	member(H,La),
+	group_similar(T1,La,L2),
+	!.
+group_similar([1/(H^N)|T1],La,L2) :-
+	\+ member(H,La),
+	minus(N,N1),
+	calculate_esponent(H,T1,N1,0),
+	group_similar(T1,[H|La],L2),
+	!.
+group_similar([1/(H^N)|T1],La,[H|T2]) :-
+	\+ member(H,La),
+	minus(N,N1),
+	calculate_esponent(H,T1,N1,1),
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([1/(H^N)|T1],La,[1/(H^E1)|T2]) :-
+	\+ member(H,La),
+	minus(N,N1),
+	calculate_esponent(H,T1,N1,E),
+	number(E),
+	E < 0,
+	E1 is -E,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([1/(H^N)|T1],La,[H^E|T2]) :-
+	\+ member(H,La),
+	minus(N,N1),
+	calculate_esponent(H,T1,N1,E),
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([1/H|T1],La,[1/(H^E1)|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,-1,E),
+	number(E),
+	E < 0,
+	E1 is -E,
+	E1 \= 1,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([1/H|T1],La,[1/H|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,-1,E),
+	number(E),
+	E < 0,
+	E1 is -E,
+	E1 = 1,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([1/H|T1],La,[H^E|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,-1,E),
+	E \= 0,
+	E \= 1,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([1/H|T1],La,L2) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,-1,0),
+	group_similar(T1,[H|La],L2),
+	!.
+group_similar([1/H|T1],La,[H|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,-1,1),
+	group_similar(T1,[H|La],T2),
+	!.	
+group_similar([H^N|T1],La,L2) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,N,0),
+	group_similar(T1,[H|La],L2),
+	!.
+group_similar([H^N|T1],La,[H|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,N,1),
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([H^N|T1],La,[1/(H^E1)|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,N,E),
+	number(E),
+	E < 0,
+	E1 is -E,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([H^N|T1],La,[H^E|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,N,E),
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([H|T1],La,[1/(H^E1)|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,1,E),
+	number(E),
+	E < 0,
+	E1 is -E,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([H|T1],La,[H^E|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,1,E),
+	E \= 0,
+	E \= 1,
+	group_similar(T1,[H|La],T2),
+	!.
+group_similar([H|T1],La,L2) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,1,0),
+	group_similar(T1,[H|La],L2),
+	!.
+group_similar([H|T1],La,[H|T2]) :-
+	\+ member(H,La),
+	calculate_esponent(H,T1,1,1),
+	group_similar(T1,[H|La],T2),
+	!.
+	
+	
+calculate_esponent(H,[],C,C) :- !.
+calculate_esponent(H,[1/(H^N)|T],C,E) :-
+	minus(N,N1),
+	sum_op(C,N1,P),
+	collect(P,C1),
+	calculate_esponent(H,T,C1,E),
+	!.	
+calculate_esponent(H,[1/H|T],C,E) :-
+	sum_op(C,-1,P),
+	collect(P,C1),
+	calculate_esponent(H,T,C1,E),
+	!.
+calculate_esponent(H,[H^N|T],C,E) :-
+	sum_op(C,N,P),
+	collect(P,C1),
+	calculate_esponent(H,T,C1,E),
+	!.	
+calculate_esponent(H,[H|T],C,E) :-
+	sum_op(C,1,P),
+	collect(P,C1),
+	calculate_esponent(H,T,C1,E),
+	!.
+calculate_esponent(H,[H1|T],C,E) :-
+	calculate_esponent(H,T,C,E),
+	!.
+
+
+
+first_subterm_in_bracket_negative(Term1+Term2,RestOfTerm+Term2) :-
+	first_subterm_in_bracket_negative(Term1,RestOfTerm),
+	!.
+first_subterm_in_bracket_negative(Term1-Term2,RestOfTerm-Term2) :-
+	first_subterm_in_bracket_negative(Term1,RestOfTerm),
+	!.
+first_subterm_in_bracket_negative(-Term,Term1) :-
+	\+ atom(Term),
+	change_sign(Term,Term1),
+	!.
+	
+collect(Term,Term) :-
+	is_product(Term),
+	!.	
+collect(Term,NewTerm) :-
+	term_in_list(Term,'+',L,NewTermList),
+	collect_in_list(NewTermList,CollectedTermList),
+	create_collected_term(CollectedTermList,Term1),
+	sort_composed_factors([Term1],L1),
+	reverse(L1,L2),
+	create_expression(L2,NewTerm),
+	!.
+
+collect(Term,NewTerm) :-
+	first_subterm_in_bracket_negative(Term,Term1),
+	collect(Term1,Term2),
+	sort_composed_factors([Term2],L),
+	reverse(L,L1),
+	create_expression(L1,NewTerm),
+	!.	
+	
+change_sign(Term,NewTerm) :-
+	term_in_list(Term,'+',L0,L),
+	change_sign_1(L,L1),
+	create_product_terms_in_list(L1,L2),
+	reverse(L2,L3),
+	create_expression(L3,NewTerm).
+	
+change_sign_1([],[]).	
+change_sign_1([['+'|SL]|TL],[['-'|SL]|TL1]) :-
+	change_sign_1(TL,TL1).
+change_sign_1([['-'|SL]|TL],[['+'|SL]|TL1]) :-
+	change_sign_1(TL,TL1).
+	
+
+term_in_list(T^N,'+',L,LR) :-
+	number(T),
+	number(N),
+	%P is T^N,
+	pow_op(T,N,P),
+	in_list(P,TL0,TL),
+	append(L,[TL],LR),
+	!.
+term_in_list(T^N,'-',L,LR) :-
+	number(T),
+	number(N),
+	%P is T^N,
+	pow_op(T,N,P),
+	P1 is -P,
+	in_list(P1,TL0,TL),
+	append(L,[TL],LR),
+	!.
+term_in_list(T^N,'+',L,LR) :-
+	in_list(T^N,TL0,TL),
+	append(L,[TL],LR),
+	!.
+term_in_list(A/B,'+',L,LR) :-
+	number(A),
+	number(B),
+	real_form(A,Ar),
+	real_form(B,Br),
+	D is Ar/Br,
+	in_list(D,TL0,TL),
+	append(L,[TL],LR),
+	!.
+term_in_list(A/B,'-',L,LR) :-
+	number(A),
+	number(B),
+	real_form(A,Ar),
+	real_form(B,Br),
+	D is Ar/Br,
+	D1 is -D,
+	in_list(D1,TL0,TL),
+	append(L,[TL],LR),
+	!.
+term_in_list(T,'+',L,LR) :-
+	is_product(T),
+	in_list(T,TL0,TL),
+	append(L,[TL],LR),
+	!.
+term_in_list(T,'-',L,LR) :-
+	is_product(T),
+	in_list(T,TL0,['+'|Tail]),
+	append(L,[['-'|Tail]],LR),
+	!.
+term_in_list(T,'-',L,LR) :-
+	is_product(T),
+	in_list(T,TL0,['-'|Tail]),
+	append(L,[['+'|Tail]],LR),
+	!.	
+term_in_list(T1+T2,'+',L,LR) :-
+	term_in_list(T1,'+',L,LA),
+	term_in_list(T2,'+',LA,LR),
+	!.
+term_in_list(T1-T2,'+',L,LR) :-
+	term_in_list(T1,'+',L,LA),
+	term_in_list(T2,'-',LA,LR),
+	!.
+term_in_list(T1+T2,'-',L,LR) :-
+	term_in_list(T1,'-',L,LA),
+	term_in_list(T2,'-',LA,LR),
+	!.
+term_in_list(T1-T2,'-',L,LR) :-
+	term_in_list(T1,'-',L,LA),
+	term_in_list(T2,'+',LA,LR),
+	!.
+
+collect_in_list(TL,TCL) :-
+	decompose(TL,TDL),
+	sum_similar(TDL,[],TCL),
+	!.
+
+
+decompose([],[]).
+decompose([H|T],[(Sign,Coeff,SimpleVars,ComposedTerms)|TD]) :-
+	decompose_1(H,Sign,Coeff,SV,SimpleVars,CT,ComposedTerms),
+	decompose(T,TD).
+
+decompose_1([],Sign,Coeff,SV,SV1,CT,CT1) :-
+	var(Coeff),
+	Coeff = 1,
+	append(SV,[],SV1),
+	append(CT,[],CT1),
+	!.
+decompose_1([],Sign,Coeff,SV,SV1,CT,CT1) :-
+	append(SV,[],SV1),
+	append(CT,[],CT1),
+	!.	
+decompose_1([H|T],H,Coeff,SV,SimpleVars,CT,ComposedTerms) :-
+	sign(H),
+	decompose_1(T,H,Coeff,SV,SimpleVars,CT,ComposedTerms),
+	!.
+decompose_1([H|T],Sign,H,SV,SimpleVars,CT,ComposedTerms) :-
+	number(H),
+	decompose_1(T,Sign,H,SV,SimpleVars,CT,ComposedTerms),
+	!.
+decompose_1([H|T],Sign,Coeff,SV,SimpleVars,CT,ComposedTerms) :-
+	single_element(H),
+	append(SV,[H],SV1),
+	decompose_1(T,Sign,Coeff,SV1,SimpleVars,CT,ComposedTerms),
+	!.
+decompose_1([H|T],Sign,Coeff,SV,SimpleVars,CT,ComposedTerms) :-
+	\+ single_element(H),
+	append(CT,[H],CT1),
+	decompose_1(T,Sign,Coeff,SV,SimpleVars,CT1,ComposedTerms),
+	!.
+
+sum_similar([],_,[]).
+sum_similar([(S,C,SL,CL)|T],La,Lr) :-
+	member((_,_,SL,CL),La),
+	sum_similar(T,La,Lr).
+	
+sum_similar([(S,C,SL,CL)|T],La,Lr) :-
+	permutation(CL,CL1),
+	member((_,_,SL,CL1),La),
+	sum_similar(T,La,Lr).		
+	
+sum_similar([('+',C,SL,CL)|T],La,[LSum|Tr]) :-
+	\+ member((_,_,SL,CL),La),
+	sum_similar_1((S,C,SL,CL),T,C,Sum),
+	Sum \= 0,
+	get_sign(Sum,Sign,AbsSum),
+	append([Sign,AbsSum],SL,L0),
+	append(L0,CL,LSum),
+	sum_similar(T,[(S,C,SL,CL)|La],Tr).
+sum_similar([('-',C,SL,CL)|T],La,[LSum|Tr]) :-
+	\+ member((_,_,SL,CL),La),
+	C1 is -C,
+	sum_similar_1((S,C,SL,CL),T,C1,Sum),
+	Sum \= 0,
+	get_sign(Sum,Sign,AbsSum),
+	append([Sign,AbsSum],SL,L0),
+	append(L0,CL,LSum),
+	sum_similar(T,[(S,C,SL,CL)|La],Tr).
+sum_similar([('+',C,SL,CL)|T],La,Lr) :-
+	\+ member((_,_,SL,CL),La),
+	sum_similar_1((S,C,SL,CL),T,C,Sum),
+	Sum = 0,
+	sum_similar(T,[(S,C,SL,CL)|La],Lr).
+sum_similar([('-',C,SL,CL)|T],La,Lr) :-
+	\+ member((_,_,SL,CL),La),
+	C1 is -C,
+	sum_similar_1((S,C,SL,CL),T,C1,Sum),
+	Sum = 0,
+	sum_similar(T,[(S,C,SL,CL)|La],Lr).
+
+permutation(Xs,[Z|Zs]) :-
+  select(Z,Xs,Ys),
+  permutation(Ys,Zs).
+permutation([],[]).	
+
+	
+get_sign(Number,'+',Number) :-
+	number(Number),
+	Number >= 0,
+	!.
+get_sign(Number,'-',AbsNumber) :-
+	number(Number),
+	Number < 0,
+	AbsNumber is -Number,
+	!.
+	
+sum_similar_1(H,[],C,C) :- !.	
+sum_similar_1((S1,C1,SL,CL),[('+',C2,SL,CL)|T2],C,S) :-
+	C3 is C + C2,
+	sum_similar_1((S1,C1,SL,CL),T2,C3,S),
+	!.
+sum_similar_1((S1,C1,SL,CL),[('-',C2,SL,CL)|T2],C,S) :-
+	C3 is C - C2,
+	sum_similar_1((S1,C1,SL,CL),T2,C3,S),
+	!.
+
+sum_similar_1((S1,C1,SL,CL1),[('+',C2,SL,CL2)|T2],C,S) :-
+	permutation(CL2,CL1),
+	C3 is C + C2,
+	sum_similar_1((S1,C1,SL,CL1),T2,C3,S),
+	!.
+sum_similar_1((S1,C1,SL,CL1),[('-',C2,SL,CL2)|T2],C,S) :-
+	permutation(CL2,CL1),
+	C3 is C - C2,
+	sum_similar_1((S1,C1,SL,CL1),T2,C3,S),
+	!.
+
+sum_similar_1((S1,C1,SL1,CL1),[(S2,C2,SL2,CL2)|T2],C,S) :-
+	sum_similar_1((S1,C1,SL1,CL1),T2,C,S),
+	!.
+
+create_collected_term([],0).
+create_collected_term(CollectedTermList,CollectedTerm) :-
+	create_product_terms_in_list(CollectedTermList,ProductTermList),
+	reverse(ProductTermList,ProductTermListRev),
+	create_expression(ProductTermListRev,CollectedTerm).
+
+create_product_terms_in_list([],[]).	
+create_product_terms_in_list([H|T],[H1|T1]) :-
+	reverse(H,HR),
+	create_term_product(HR,H1),
+	create_product_terms_in_list(T,T1).	
+
+create_expression([H],H) :- !.
+create_expression([H|T],R-AbsFactor) :-
+	first_factor(H,First,AbsFactor),
+	number(First),
+	First < 0,
+	create_expression(T,R),
+	!.
+create_expression([H|T],R+AbsFactor) :-
+	first_factor(H,First,AbsFactor),
+	number(First),
+	First > 0,
+	create_expression(T,R),
+	!.
+create_expression([H|T],R-AbsFactor) :-
+	first_factor(H,-First,AbsFactor),
+	create_expression(T,R),
+	!.
+create_expression([H|T],R+AbsFactor) :-
+	first_factor(H,First,AbsFactor),
+	create_expression(T,R),
+	!.
+
+simplify_solution(log(base(B),A),log(base(B),A)).
+simplify_solution(180-arcsin(T),180-arcsin(T)).
+simplify_solution(arcsin(T),arcsin(T)).
+simplify_solution(-arccos(T),-arccos(T)).
+simplify_solution(arccos(T),arccos(T)).
+simplify_solution(Solution,NewSolution) :-
+	split_in_list(Solution,SplitList),
+	clean_list(SplitList,CleanedList),
+	create_subterms(CleanedList,SubtermsList),
+	reverse(SubtermsList,SubtermsListReverse),
+	create_solution(SubtermsListReverse,NewSolution).
+	
+split_in_list(Term,List) :-
+	split_in_list_plus_minus(Term,List1),
+	split_in_list_1(List1,List).
+
+split_in_list_1([],[]).
+split_in_list_1([H|T],[HSL|T1]) :-
+	split_in_list_times_division(H,HSL),
+	split_in_list_1(T,T1).
+
+split_in_list_plus_minus(T1+T2,L) :-
+	split_in_list_plus_minus(T1,L1),
+	split_in_list_plus_minus(T2,L2),
+	append(L1,L2,L),
+	!.
+split_in_list_plus_minus(T1-T2,L) :-
+	split_in_list_plus_minus(T1,L1),
+	change_sign(T2,T2C),
+	split_in_list_plus_minus(T2C,L2),
+	append(L1,L2,L),
+	!.
+split_in_list_plus_minus(T,[T]) :- !.
+
+split_in_list_times_division(-(1/T1)*T2,[-T2/T1]) :-
+	!.
+split_in_list_times_division((1/T1)*(1/T2)*T3,[T3/(T1*T2)]) :-
+	!.
+split_in_list_times_division((1/T1)*T2,[T2/T1]) :-
+	!.
+split_in_list_times_division(T1*(1/T2),[T1/T2]) :-
+	!.
+split_in_list_times_division(T1*(T2*T3),L) :-
+	split_in_list_times_division(T1,L1),
+	append(L1,['*',(T2*T3)],L),
+	!.
+split_in_list_times_division(T1*(T2/T3),L) :-
+	split_in_list_times_division(T1,L1),
+	append(L1,['*',(T2/T3)],L),
+	!.
+split_in_list_times_division(T1/(T2*T3),L) :-
+	split_in_list_times_division(T1,L1),
+	append(L1,['/',(T2*T3)],L),
+	!.
+split_in_list_times_division(T1/(T2/T3),L) :-
+	split_in_list_times_division(T1,L1),
+	append(L1,['/',(T2/T3)],L),
+	!.
+split_in_list_times_division(T1*T2,L) :-
+	split_in_list_times_division(T1,L1),
+	split_in_list_times_division(T2,L2),
+	append(L1,['*'|L2],L),
+	!.
+split_in_list_times_division(T1/T2,L) :-
+	split_in_list_times_division(T1,L1),
+	split_in_list_times_division(T2,L2),
+	append(L1,['/'|L2],L),
+	!.
+split_in_list_times_division(T,[T]) :- !.
+
+clean_list([],[]).
+clean_list([H|T],[H1|T1]) :-
+	clean_list_1(H,H1),
+	clean_list(T,T1).
+
+clean_list_1([],[]).
+clean_list_1(['*',1,'/'|T],['/'|T1]) :-
+	clean_list_1(T,T1),
+	!.
+clean_list_1(['*'|T],['*'|T1]) :-
+	clean_list_1(T,T1),
+	!.
+clean_list_1([H|T],[H1|T1]) :-
+	clean_list_2(H,H1),
+	clean_list_1(T,T1),
+	!.
+
+clean_list_2(-H^E,-H1^E1) :-
+	simplify_solution(H,H1),
+	simplify_solution(E,E1),
+	!.
+clean_list_2(H^E,H1^E1) :-
+	simplify_solution(H,H1),
+	simplify_solution(E,E1),
+	%write(E1),nl,
+	!.
+clean_list_2(-H,-H) :-
+	atomic(H),
+	!.
+clean_list_2(H,H) :-
+	atomic(H),
+	!.
+clean_list_2(-(1/H),-(1/H)) :-
+	atomic(H),
+	!.
+
+clean_list_2(-H,H1) :-
+	change_sign(H,HC),
+	simplify_solution(HC,H1),
+	!.
+clean_list_2(H,H1) :-
+	simplify_solution(H,H1),
+	!.
+
+create_subterms([],[]).
+create_subterms([H|T],[H1|T1]) :-
+	reverse(H,HR),
+	create_subterms_1(HR,H1),
+	create_subterms(T,T1).
+
+create_subterms_1([H],H) :- !.
+create_subterms_1([H,'*'|T],R*H) :-
+	create_subterms_1(T,R),
+	!.
+create_subterms_1([H,'/'|T],R/H) :-
+	create_subterms_1(T,R),
+	!.
+
+create_solution([H],H) :- !.
+create_solution([-H|T],R-H) :-
+	create_solution(T,R),
+	!.
+create_solution([H|T],R-ABS) :-
+	is_product(H),
+	first_factor(H,N,ABS),
+	number(N),
+	N < 0,
+	create_solution(T,R),
+	!.
+create_solution([H|T],R+H) :-
+	create_solution(T,R),
+	!.
+
+tolist(Eq,[]):-
+	number(Eq).
+	
+tolist(Eq,[Eq]):-
+	atom(Eq).
+	
+tolist(Eq,L1):-
+	compound(Eq),
+	functor(Eq,F,1),
+	arg(1,Eq,Arg1),
+	tolist(Arg1,L1).
+	
+tolist(Eq,L):-
+	compound(Eq),
+	functor(Eq,F,2),
+	arg(1,Eq,Arg1),
+	arg(2,Eq,Arg2),
+	tolist(Arg1,L1),
+	tolist(Arg2,L2),
+	append(L1,L2,L).
+
+notin(L,[]):-!.
+notin(L,[T|C]):-
+	\+ member(T,L),
+	notin(L,C).
